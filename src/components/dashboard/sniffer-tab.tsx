@@ -32,6 +32,10 @@ import {
   Database,
   GitCompareArrows,
   CheckCircle2 as ScenarioDone,
+  Camera,
+  TrendingUp,
+  TrendingDown,
+  Minus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +76,7 @@ import {
   type Session,
   type SnifferStats,
   type ScenarioResult,
+  type SeriesPoint,
 } from "@/hooks/use-sniffer-stream";
 import { PpsChart, type ChartMetric } from "@/components/dashboard/pps-chart";
 import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
@@ -85,6 +90,7 @@ import {
   fmtTime,
   fmtCompact,
   fmtRate,
+  fmtUptime,
   protocolColor,
   protocolDot,
 } from "@/lib/format";
@@ -121,6 +127,7 @@ function StatCard({
   alert,
   critPulse,
   spark,
+  trend,
 }: {
   label: string;
   value: string;
@@ -129,6 +136,7 @@ function StatCard({
   alert?: boolean;
   critPulse?: boolean;
   spark?: React.ReactNode;
+  trend?: Trend | null;
 }) {
   return (
     <Card
@@ -147,8 +155,11 @@ function StatCard({
           <Icon className={`size-4 sm:size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-base font-bold leading-tight tracking-tight text-slate-50 tabular-nums sm:text-lg">
-            {value}
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-base font-bold leading-tight tracking-tight text-slate-50 tabular-nums sm:text-lg">
+              {value}
+            </span>
+            {trend && <TrendBadge trend={trend} />}
           </div>
           <div className="truncate text-[11px] text-slate-400 sm:text-xs">{label}</div>
           {sub && <div className="truncate text-[10px] text-slate-500">{sub}</div>}
@@ -236,6 +247,169 @@ function ExportCount({ n }: { n: number | null | undefined }) {
     <span className="ml-auto animate-in pl-3 font-mono text-[10px] text-slate-500 tabular-nums fade-in duration-300">
       {fmtCompact(n)}
     </span>
+  );
+}
+
+/** Тренд KPI: среднее последних 60 с против предыдущих 60 с (из series). */
+interface Trend {
+  pct: number;
+  dir: "up" | "down" | "flat";
+}
+
+function computeTrend(values: number[]): Trend | null {
+  if (values.length < 70) return null;
+  const last = values.slice(-60);
+  const prev = values.slice(-120, -60);
+  if (prev.length < 30) return null;
+  const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const now = avg(last);
+  const before = avg(prev);
+  if (before < 1e-9) return null;
+  const pct = ((now - before) / before) * 100;
+  if (Math.abs(pct) < 3) return { pct, dir: "flat" };
+  return { pct, dir: pct > 0 ? "up" : "down" };
+}
+
+/** Бейдж тренда: рост нагрузки — янтарный, спад — изумрудный, ровно — серый. */
+function TrendBadge({ trend }: { trend: Trend }) {
+  const cfg =
+    trend.dir === "up"
+      ? { Icon: TrendingUp, cls: "border-amber-500/50 bg-amber-500/10 text-amber-400", sign: "+" }
+      : trend.dir === "down"
+        ? { Icon: TrendingDown, cls: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400", sign: "−" }
+        : { Icon: Minus, cls: "border-slate-600/50 bg-slate-600/10 text-slate-400", sign: "" };
+  const rounded = Math.abs(Math.round(trend.pct));
+  return (
+    <span
+      title={`Тренд за минуту: среднее последних 60 с против предыдущих 60 с (${trend.pct > 0 ? "+" : trend.pct < 0 ? "−" : ""}${Math.abs(trend.pct).toFixed(0)}%)`}
+      className={`hidden shrink-0 animate-in items-center gap-0.5 rounded border px-1 py-px font-mono text-[9px] leading-none fade-in duration-300 sm:inline-flex ${cfg.cls}`}
+    >
+      <cfg.Icon className="size-2.5" aria-hidden />
+      {cfg.sign}
+      {rounded}%
+    </span>
+  );
+}
+
+/** Ручной срез аналитики («снять срез») — для сравнения A → B. */
+interface Snapshot {
+  id: number;
+  ts: string;
+  totalPackets: number;
+  totalBytes: number;
+  alerts: number;
+  invalid: number;
+  activeSessions: number;
+  perProtocol: Record<string, number>;
+}
+
+/** Сравнение двух ручных срезов: дельты счётчиков + рост по протоколам (violet-акцент). */
+function SnapshotDiff({ a, b, onClear }: { a: Snapshot; b: Snapshot; onClear: () => void }) {
+  const diff = useMemo(() => {
+    const perProtocol: Record<string, number> = {};
+    for (const [proto, now] of Object.entries(b.perProtocol)) {
+      const delta = now - (a.perProtocol[proto] ?? 0);
+      if (delta > 0) perProtocol[proto] = delta;
+    }
+    const durationSec = Math.max(
+      1,
+      Math.round((new Date(b.ts).getTime() - new Date(a.ts).getTime()) / 1000)
+    );
+    return {
+      durationSec,
+      packets: Math.max(0, b.totalPackets - a.totalPackets),
+      bytes: Math.max(0, b.totalBytes - a.totalBytes),
+      alerts: Math.max(0, b.alerts - a.alerts),
+      invalid: Math.max(0, b.invalid - a.invalid),
+      perProtocol: Object.entries(perProtocol).sort((x, y) => y[1] - x[1]),
+    };
+  }, [a, b]);
+  const protoTotal = diff.perProtocol.reduce((acc, [, n]) => acc + n, 0);
+  const pps = Math.round((diff.packets / diff.durationSec) * 10) / 10;
+  return (
+    <div
+      role="status"
+      aria-label={`Сравнение срезов аналитики за ${diff.durationSec} с`}
+      className="mt-3 animate-in rounded-lg border border-violet-500/25 bg-violet-500/[0.04] p-3 fade-in slide-in-from-bottom-2 duration-300"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-xs font-medium text-slate-200">
+          <GitCompareArrows className="size-3.5 text-violet-400" aria-hidden />
+          Сравнение срезов A → B
+          <Badge
+            variant="outline"
+            className="border-slate-700 px-1.5 py-0 font-mono text-[10px] text-slate-400"
+          >
+            {fmtUptime(diff.durationSec)}
+          </Badge>
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Сбросить сравнение срезов"
+          title="Сбросить срезы"
+          className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <Activity className="size-3 text-violet-400" aria-hidden />
+          <span className="font-semibold text-violet-300 tabular-nums">+{fmtCompact(diff.packets)}</span> пакетов
+          <span className="text-slate-500">· {pps}/с</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <HardDrive className="size-3 text-cyan-400" aria-hidden />
+          <span className="font-semibold text-cyan-300 tabular-nums">+{fmtBytes(diff.bytes)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <Siren className="size-3 text-red-400" aria-hidden />
+          <span className="font-semibold text-red-300 tabular-nums">+{diff.alerts}</span> тревог
+        </span>
+        {diff.invalid > 0 && (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+            <XCircle className="size-3 text-amber-400" aria-hidden />
+            <span className="tabular-nums">{diff.invalid}</span> невалидных
+          </span>
+        )}
+      </div>
+      {diff.perProtocol.length > 0 && (
+        <div className="mt-2.5 border-t border-violet-500/15 pt-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Рост по протоколам — срез A → срез B
+          </p>
+          <div
+            className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800"
+            role="img"
+            aria-label={`Дельты по протоколам между срезами: ${diff.perProtocol
+              .map(([p, n]) => `${p} +${n}`)
+              .join(", ")}`}
+          >
+            {diff.perProtocol.map(([proto, n]) => (
+              <div
+                key={proto}
+                className={`${protocolDot(proto)} transition-[flex-basis] duration-700`}
+                style={{ flexBasis: `${Math.max(2, (n / protoTotal) * 100)}%` }}
+                title={`${proto}: +${n}`}
+              />
+            ))}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            {diff.perProtocol.map(([proto, n]) => (
+              <span
+                key={proto}
+                className="inline-flex items-center gap-1.5 font-mono text-[10px] text-slate-300"
+              >
+                <span className={`size-1.5 rounded-full ${protocolDot(proto)}`} aria-hidden />
+                {proto}
+                <span className="font-semibold text-violet-300 tabular-nums">+{fmtCompact(n)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -404,6 +578,9 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [frozenPackets, setFrozenPackets] = useState<Packet[] | null>(null);
   const [frozenTopId, setFrozenTopId] = useState(0);
   const [frozenStats, setFrozenStats] = useState<SnifferStats | null>(null);
+  const [chartPaused, setChartPaused] = useState(false);
+  const [frozenSeries, setFrozenSeries] = useState<SeriesPoint[] | null>(null);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [muted, setMuted] = useState(false);
   const [selected, setSelected] = useState<Packet | null>(null);
   const [pendingId, setPendingId] = useState<number | null>(null);
@@ -529,7 +706,55 @@ export function SnifferTab({ live }: SnifferTabProps) {
     tableCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  // Горячие клавиши вкладки: P — пауза, / — фокус на поиск
+  // Пауза графика отдельно от таблицы: график заморожен, поток и счётчики живут
+  const toggleChartPause = () => {
+    if (!chartPaused) {
+      setFrozenSeries(series);
+      setChartPaused(true);
+      toast.info("График заморожен", {
+        description: "Таблица пакетов и счётчики продолжают обновляться в реальном времени.",
+        duration: 2500,
+      });
+    } else {
+      setFrozenSeries(null);
+      setChartPaused(false);
+    }
+  };
+
+  // Ручной срез аналитики для сравнения A → B (кнопка или хоткей S)
+  const takeSnapshot = () => {
+    if (!stats) return;
+    const snap: Snapshot = {
+      id: Date.now(),
+      ts: new Date().toISOString(),
+      totalPackets: stats.totalPackets,
+      totalBytes: stats.totalBytes,
+      alerts: stats.alertsCount,
+      invalid: stats.invalidPackets,
+      activeSessions: stats.activeSessions,
+      perProtocol: { ...stats.perProtocol },
+    };
+    const count = snapshots.length;
+    setSnapshots((prev) => (prev.length >= 2 ? [...prev.slice(1), snap] : [...prev, snap]));
+    if (count === 0) {
+      toast.success("Срез A зафиксирован", {
+        description: "Снимите второй срез — панель посчитает дельты между ними.",
+        duration: 2500,
+      });
+    } else if (count === 1) {
+      toast.success("Срез B зафиксирован — сравнение готово", {
+        description: "Дельты показаны в карточке «Аналитика трафика».",
+        duration: 2500,
+      });
+    } else {
+      toast("Срез B обновлён", {
+        description: "Старый срез вытеснен — дельты пересчитаны от нового B.",
+        duration: 2500,
+      });
+    }
+  };
+
+  // Горячие клавиши вкладки: P — пауза таблицы, S — снять срез, / — фокус на поиск
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -539,6 +764,10 @@ export function SnifferTab({ live }: SnifferTabProps) {
         if (typing || sheetOpen) return;
         e.preventDefault();
         handlePause();
+      } else if (e.key.toLowerCase() === "s" || e.key === "ы") {
+        if (typing || sheetOpen) return;
+        e.preventDefault();
+        takeSnapshot();
       } else if (e.key === "/") {
         if (sheetOpen) return;
         e.preventDefault();
@@ -547,7 +776,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sheetOpen, packets, paused]);
+  }, [sheetOpen, packets, paused, stats, snapshots]);
 
   const openPacketById = (id: number) => {
     const local = packets.find((p) => p.id === id);
@@ -604,6 +833,13 @@ export function SnifferTab({ live }: SnifferTabProps) {
       toast("Звук тревог выключен", { duration: 2000 });
     }
   };
+
+  // Тренды KPI: дельта среднего за последнюю минуту против предыдущей (из series)
+  const ppsTrend = useMemo(() => computeTrend(series.map((s) => s.pps)), [series]);
+  const bpsTrend = useMemo(() => computeTrend(series.map((s) => s.bps)), [series]);
+
+  // Видимый ряд графика: замораживается независимо от таблицы
+  const chartSeries = chartPaused && frozenSeries ? frozenSeries : series;
 
   const filtered = useMemo(() => {
     const source = paused && frozenPackets ? frozenPackets : packets;
@@ -730,6 +966,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
           value={stats ? fmtCompact(stats.totalPackets) : "—"}
           sub={stats ? `${stats.lastPps} п/с · ${stats.invalidPackets} невалидных` : undefined}
           spark={<Sparkline data={series.map((s) => s.pps)} stroke="#10b981" />}
+          trend={ppsTrend}
         />
         <StatCard
           icon={HardDrive}
@@ -737,6 +974,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
           value={stats ? fmtBytes(stats.totalBytes) : "—"}
           sub={stats ? fmtRate(stats.lastBps) : undefined}
           spark={<Sparkline data={series.map((s) => s.bps)} stroke="#22d3ee" />}
+          trend={bpsTrend}
         />
         <StatCard
           icon={Network}
@@ -826,8 +1064,12 @@ export function SnifferTab({ live }: SnifferTabProps) {
         )}
       </Card>
 
-      {/* График */}
-      <Card className="border-slate-800 bg-slate-900/60">
+      {/* График (пауза графика — отдельно от паузы таблицы) */}
+      <Card
+        className={`border-slate-800 bg-slate-900/60 transition-colors ${
+          chartPaused ? "border-amber-500/40 shadow-[0_0_18px_-8px] shadow-amber-500/30" : ""
+        }`}
+      >
         <CardHeader className="p-4 pb-2">
           <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-200">
             <span className="flex flex-wrap items-center gap-2">
@@ -837,54 +1079,127 @@ export function SnifferTab({ live }: SnifferTabProps) {
                   uptime {Math.floor(stats.uptimeSec / 60)}м {stats.uptimeSec % 60}с
                 </Badge>
               )}
+              {chartPaused && (
+                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
+                  график на паузе
+                </Badge>
+              )}
             </span>
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              value={metric}
-              onValueChange={(v) => v && setMetric(v as ChartMetric)}
-            >
-              <ToggleGroupItem
-                value="pps"
-                aria-label="Метрика: пакетов в секунду"
-                className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-emerald-500/15 data-[state=on]:text-emerald-300"
+            <span className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={toggleChartPause}
+                aria-pressed={chartPaused}
+                aria-label={chartPaused ? "Продолжить график" : "Пауза графика"}
+                title={
+                  chartPaused
+                    ? "Продолжить график"
+                    : "Пауза графика — таблица и счётчики продолжают обновляться"
+                }
+                className={`h-8 w-8 p-0 ${
+                  chartPaused
+                    ? "text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                }`}
               >
-                пак/с
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="bps"
-                aria-label="Метрика: байтов в секунду"
-                className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-cyan-500/15 data-[state=on]:text-cyan-300"
+                {chartPaused ? <Play className="size-4" aria-hidden /> : <Pause className="size-4" aria-hidden />}
+              </Button>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                value={metric}
+                onValueChange={(v) => v && setMetric(v as ChartMetric)}
               >
-                Б/с
-              </ToggleGroupItem>
-            </ToggleGroup>
+                <ToggleGroupItem
+                  value="pps"
+                  aria-label="Метрика: пакетов в секунду"
+                  className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-emerald-500/15 data-[state=on]:text-emerald-300"
+                >
+                  пак/с
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="bps"
+                  aria-label="Метрика: байтов в секунду"
+                  className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-cyan-500/15 data-[state=on]:text-cyan-300"
+                >
+                  Б/с
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4 pt-0">
-          <PpsChart series={series} metric={metric} />
+          <PpsChart series={chartSeries} metric={metric} frozen={chartPaused} />
         </CardContent>
       </Card>
 
-      {/* Распределение протоколов + топы (аналитика замирает на паузе) */}
+      {/* Распределение протоколов + топы (аналитика замирает на паузе; срезы — ручные снимки) */}
       {visibleStats && (
         <Card
           className={`border-slate-800 bg-slate-900/60 transition-colors ${
-            paused ? "border-amber-500/30" : ""
+            paused
+              ? "border-amber-500/30"
+              : snapshots.length > 0
+                ? "border-violet-500/25"
+                : ""
           }`}
         >
           <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
-              Аналитика трафика
-              {paused && (
-                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
-                  снимок на паузе
-                </Badge>
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+                Аналитика трафика
+                {paused && (
+                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
+                    снимок на паузе
+                  </Badge>
+                )}
+              </CardTitle>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                {paused ? "зафиксировано на момент паузы" : "живые счётчики буфера"}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {snapshots.map((s, i) => (
+                <span
+                  key={s.id}
+                  title={`Срез ${i === 0 ? "A" : "B"} — снят в ${fmtClock(s.ts)} · ${fmtCompact(s.totalPackets)} пакетов`}
+                  className="inline-flex animate-in items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 font-mono text-[10px] text-violet-300 fade-in duration-300"
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${i === 0 ? "bg-violet-400" : "bg-fuchsia-400"}`}
+                    aria-hidden
+                  />
+                  срез {i === 0 ? "A" : "B"} · {fmtClock(s.ts)}
+                </span>
+              ))}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={takeSnapshot}
+                disabled={!stats}
+                title="Снять срез аналитики (S) — второй срез запускает сравнение"
+                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-violet-300"
+              >
+                <Camera className="size-3.5" aria-hidden />
+                {snapshots.length === 0 ? "Снять срез" : snapshots.length === 1 ? "Снять срез B" : "Новый срез"}
+                <kbd className="ml-1 hidden rounded border border-slate-700 bg-slate-900 px-1 font-mono text-[9px] text-slate-500 sm:inline">
+                  S
+                </kbd>
+              </Button>
+              {snapshots.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSnapshots([])}
+                  aria-label="Сбросить срезы аналитики"
+                  title="Сбросить срезы"
+                  className="h-9 w-9 p-0 text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+                >
+                  <X className="size-3.5" aria-hidden />
+                </Button>
               )}
-            </CardTitle>
-            <span className="text-[11px] text-slate-500">
-              {paused ? "зафиксировано на момент паузы" : "живые счётчики буфера"}
-            </span>
+            </div>
           </CardHeader>
           <CardContent className="p-4 pt-0">
             <ProtocolBreakdown
@@ -893,6 +1208,9 @@ export function SnifferTab({ live }: SnifferTabProps) {
               topMethods={visibleStats.topMethods}
               topClients={visibleStats.topClients}
             />
+            {snapshots.length === 2 && (
+              <SnapshotDiff a={snapshots[0]} b={snapshots[1]} onClear={() => setSnapshots([])} />
+            )}
           </CardContent>
         </Card>
       )}

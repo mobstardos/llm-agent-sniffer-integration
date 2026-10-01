@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { Snowflake } from "lucide-react";
 import type { SeriesPoint } from "@/hooks/use-sniffer-stream";
 import { fmtCompact } from "@/lib/format";
 
@@ -10,6 +11,8 @@ interface PpsChartProps {
   series: SeriesPoint[];
   metric: ChartMetric;
   height?: number;
+  /** График на паузе: маркер «снимок» и таймстамп заморозки */
+  frozen?: boolean;
 }
 
 const METRIC_META: Record<ChartMetric, { color: string; label: string; unit: string }> = {
@@ -22,7 +25,7 @@ const METRIC_META: Record<ChartMetric, { color: string; label: string; unit: str
  * линия + градиентная заливка, сетка, подписи осей.
  * metric = "pps" (пакетов/с, emerald) | "bps" (байт/с, cyan).
  */
-export function PpsChart({ series, metric, height = 150 }: PpsChartProps) {
+export function PpsChart({ series, metric, height = 150, frozen = false }: PpsChartProps) {
   const W = 600;
   const H = 150;
   const meta = METRIC_META[metric];
@@ -125,6 +128,12 @@ export function PpsChart({ series, metric, height = 150 }: PpsChartProps) {
         )}
       </svg>
 
+      {frozen && (
+        <div className="pointer-events-none absolute left-2 top-1 flex animate-in items-center gap-1 rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-300 fade-in duration-300">
+          <Snowflake className="size-3" aria-hidden />
+          снимок графика
+        </div>
+      )}
       <div className="pointer-events-none absolute right-2 top-1 flex gap-1.5">
         <span
           className="rounded bg-slate-900/85 px-1.5 py-0.5 font-mono text-[10px]"
