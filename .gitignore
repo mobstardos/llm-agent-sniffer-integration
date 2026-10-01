@@ -52,3 +52,7 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Z.ai tool artifacts & runtime data
+tool-results/
+db/*.db
+db/*.db-journal
