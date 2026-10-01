@@ -39,6 +39,9 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Pin,
+  PinOff,
+  Rows3,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -99,9 +102,17 @@ import {
 } from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
+const MAX_PINS = 5;
 
 /** Ключи сортировки таблицы пакетов (по клику на заголовок). */
-type SortKey = "ts" | "size";
+type SortKey = "ts" | "size" | "port" | "protocol";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  ts: "время",
+  size: "размер",
+  port: "канал",
+  protocol: "протокол",
+};
 
 /** Скачивание текстового файла, сгенерированного на клиенте (диф срезов живёт только в памяти UI). */
 function downloadText(content: string, filename: string, mime: string) {
@@ -174,7 +185,7 @@ function StatCard({
           <Icon className={`size-4 sm:size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="truncate text-base font-bold leading-tight tracking-tight text-slate-50 tabular-nums sm:text-lg">
               {value}
             </span>
@@ -489,6 +500,8 @@ function PacketDetailSheet({
   onOpenChange,
   detail,
   loading,
+  pinned,
+  onTogglePin,
 }: {
   packet: Packet | null;
   pendingId: number | null;
@@ -496,6 +509,8 @@ function PacketDetailSheet({
   onOpenChange: (v: boolean) => void;
   detail: { hexdump: string } | null;
   loading: boolean;
+  pinned: boolean;
+  onTogglePin: (p: Packet) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
@@ -568,16 +583,37 @@ function PacketDetailSheet({
               <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 Поля пакета
               </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleCopyJson}
-                className="h-7 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-cyan-300"
-                aria-label="Скопировать поля пакета как JSON"
-              >
-                <FileJson className="size-3" aria-hidden />
-                {jsonCopied ? "скопировано" : "JSON"}
-              </Button>
+              <div className="flex items-center gap-0.5">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onTogglePin(packet)}
+                  className={
+                    pinned
+                      ? "h-7 gap-1 px-2 text-[11px] text-amber-300 hover:bg-amber-500/10"
+                      : "h-7 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-amber-300"
+                  }
+                  aria-label={pinned ? "Открепить пакет" : "Закрепить пакет"}
+                  title={
+                    pinned
+                      ? "Убрать из закреплённых"
+                      : `Закрепить в панели над таблицей (до ${MAX_PINS})`
+                  }
+                >
+                  {pinned ? <PinOff className="size-3" aria-hidden /> : <Pin className="size-3" aria-hidden />}
+                  {pinned ? "открепить" : "закрепить"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleCopyJson}
+                  className="h-7 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-cyan-300"
+                  aria-label="Скопировать поля пакета как JSON"
+                >
+                  <FileJson className="size-3" aria-hidden />
+                  {jsonCopied ? "скопировано" : "JSON"}
+                </Button>
+              </div>
             </div>
             <div className="rounded-lg border border-slate-800">
               <Table>
@@ -664,6 +700,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [soundOn, setSoundOn] = useState(false);
   const [showTrends, setShowTrends] = useState(true);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+  const [pinned, setPinned] = useState<Packet[]>([]);
+  const [dense, setDense] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MAX_TABLE_ROWS);
   const [exportCounts, setExportCounts] = useState<ExportCounts | null>(null);
@@ -714,13 +752,15 @@ export function SnifferTab({ live }: SnifferTabProps) {
     return () => clearInterval(timer);
   }, [scenario]);
 
-  // Восстановление тумблера трендов из прошлой сессии (после гидрации)
+  // Восстановление настроек из прошлой сессии (после гидрации): тренды, плотность таблицы
   useEffect(() => {
     try {
       const v = localStorage.getItem("sniffer.showTrends");
       if (v !== null) setShowTrends(v === "1");
+      const d = localStorage.getItem("sniffer.dense");
+      if (d !== null) setDense(d === "1");
     } catch {
-      /* приватный режим — тренды просто остаются включёнными */
+      /* приватный режим — настройки просто остаются по умолчанию */
     }
   }, []);
 
@@ -852,6 +892,37 @@ export function SnifferTab({ live }: SnifferTabProps) {
     }
   };
 
+  // Закрепление пакетов: максимум MAX_PINS, при переполнении вытесняется самый старый
+  const togglePin = (p: Packet) => {
+    const exists = pinned.some((x) => x.id === p.id);
+    if (exists) {
+      setPinned(pinned.filter((x) => x.id !== p.id));
+      toast(`Пакет #${p.id} откреплён`, { duration: 1800 });
+      return;
+    }
+    const evicted = pinned.length >= MAX_PINS && pinned.length > 0 ? pinned[0] : null;
+    setPinned((prev) => (prev.length >= MAX_PINS ? [...prev.slice(1), p] : [...prev, p]));
+    toast.success(`Пакет #${p.id} закреплён`, {
+      description: evicted
+        ? `Максимум ${MAX_PINS} закреплений — пакет #${evicted.id} вытеснен.`
+        : "Чип в панели над таблицей пакетов — быстрый доступ.",
+      duration: 2200,
+    });
+  };
+
+  // Плотность строк таблицы: компактные ↔ обычные (сохраняется в localStorage)
+  const toggleDense = () => {
+    setDense((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("sniffer.dense", next ? "1" : "0");
+      } catch {
+        /* приватный режим */
+      }
+      return next;
+    });
+  };
+
   // Горячие клавиши вкладки: P — пауза таблицы, S — снять срез, / — фокус на поиск
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -960,11 +1031,18 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const sorted = useMemo(() => {
     if (!sort) return filtered;
     const arr = [...filtered];
-    arr.sort((x, y) =>
-      sort.key === "size"
-        ? x.size - y.size
-        : new Date(x.ts).getTime() - new Date(y.ts).getTime()
-    );
+    arr.sort((x, y) => {
+      switch (sort.key) {
+        case "size":
+          return x.size - y.size;
+        case "port":
+          return x.portName.localeCompare(y.portName, undefined, { numeric: true });
+        case "protocol":
+          return x.protocol.localeCompare(y.protocol);
+        default:
+          return new Date(x.ts).getTime() - new Date(y.ts).getTime();
+      }
+    });
     if (sort.dir === "desc") arr.reverse();
     return arr;
   }, [filtered, sort]);
@@ -1015,6 +1093,9 @@ export function SnifferTab({ live }: SnifferTabProps) {
     if (rest > 0) items.push({ rule: "другие правила", n: rest, cls: "bg-slate-500/80" });
     return { items, total: latest.length };
   }, [alerts]);
+
+  // Закреплённые id — янтарная метка строк в таблице
+  const pinnedIds = useMemo(() => new Set(pinned.map((p) => p.id)), [pinned]);
 
   // Активные фильтры → чипы с быстрым сбросом
   const chips = useMemo(() => {
@@ -1529,7 +1610,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
             )}
             {sort && (
               <span className="inline-flex animate-in items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 py-0.5 pl-2 pr-1 font-mono text-[10px] text-emerald-300 fade-in duration-300">
-                сортировка: {sort.key === "size" ? "размер" : "время"} {sort.dir === "desc" ? "↓" : "↑"}
+                сортировка: {SORT_LABELS[sort.key]} {sort.dir === "desc" ? "↓" : "↑"}
                 <button
                   type="button"
                   onClick={() => setSort(null)}
@@ -1542,6 +1623,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
               </span>
             )}
           </CardTitle>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={toggleDense}
+              aria-pressed={dense}
+              title={dense ? "Обычная плотность строк" : "Компактные строки — больше пакетов без прокрутки"}
+              className="min-h-[36px] w-9 justify-center border-slate-700 bg-slate-950 px-0 text-slate-400 hover:bg-slate-800 hover:text-slate-100 aria-pressed:border-emerald-500/50 aria-pressed:text-emerald-300"
+            >
+              <Rows3 className="size-3.5" aria-hidden />
+            </Button>
           <DropdownMenu
             onOpenChange={(open) => {
               if (open) {
@@ -1634,6 +1726,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         </CardHeader>
         <CardContent className="p-0 pb-2">
           {/* Быстрые фильтры каналов с живыми счётчиками */}
@@ -1668,7 +1761,45 @@ export function SnifferTab({ live }: SnifferTabProps) {
               })}
             </div>
           )}
-          <div className="max-h-[60vh] overflow-y-auto custom-scroll">
+          {/* Закреплённые пакеты — быстрая панель доступа */}
+          {pinned.length > 0 && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/60 px-4 py-2"
+              role="toolbar"
+              aria-label="Закреплённые пакеты"
+            >
+              <span className="mr-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
+                <Pin className="size-3 text-amber-400" aria-hidden />
+                Закреплено:
+              </span>
+              {pinned.map((p) => (
+                <span
+                  key={p.id}
+                  className="inline-flex animate-in items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/[0.07] py-0.5 pl-2 pr-1 font-mono text-[10px] text-amber-200 fade-in duration-300"
+                >
+                  <button
+                    type="button"
+                    onClick={() => openPacketById(p.id)}
+                    title={`Открыть пакет #${p.id} — ${p.portName}`}
+                    className="inline-flex items-center gap-1.5 rounded-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400"
+                  >
+                    #{p.id}
+                    <span className="max-w-[110px] truncate text-amber-200/70">{p.portName}</span>
+                    <span className="tabular-nums text-amber-200/50">{fmtBytes(p.size)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => togglePin(p)}
+                    aria-label={`Открепить пакет #${p.id}`}
+                    className="flex size-4 items-center justify-center rounded-full hover:bg-amber-500/25"
+                  >
+                    <X className="size-2.5" aria-hidden />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className={`max-h-[60vh] overflow-y-auto custom-scroll ${dense ? "[&_td]:py-1 [&_th]:py-1.5" : ""}`}>
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-slate-900 shadow-[0_1px_0_0_theme(colors.slate.800)]">
                 <TableRow className="border-slate-800 hover:bg-transparent">
@@ -1690,8 +1821,40 @@ export function SnifferTab({ live }: SnifferTabProps) {
                     </button>
                   </TableHead>
                   <TableHead className="text-[11px] text-slate-500">↕</TableHead>
-                  <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
-                  <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
+                  <TableHead aria-sort={sort?.key === "port" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <button
+                      type="button"
+                      onClick={() => cycleSort("port")}
+                      title="Сортировка по каналу: А→Я → Я→А → порядок потока"
+                      className={`inline-flex items-center gap-1 rounded text-[11px] transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
+                        sort?.key === "port" ? "text-emerald-300" : "text-slate-500"
+                      }`}
+                    >
+                      Канал
+                      {sort?.key === "port" ? (
+                        sort.dir === "desc" ? <ArrowDown className="size-3" aria-hidden /> : <ArrowUp className="size-3" aria-hidden />
+                      ) : (
+                        <ArrowUpDown className="size-3 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  </TableHead>
+                  <TableHead aria-sort={sort?.key === "protocol" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <button
+                      type="button"
+                      onClick={() => cycleSort("protocol")}
+                      title="Сортировка по протоколу: А→Я → Я→А → порядок потока"
+                      className={`inline-flex items-center gap-1 rounded text-[11px] transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
+                        sort?.key === "protocol" ? "text-emerald-300" : "text-slate-500"
+                      }`}
+                    >
+                      Протокол
+                      {sort?.key === "protocol" ? (
+                        sort.dir === "desc" ? <ArrowDown className="size-3" aria-hidden /> : <ArrowUp className="size-3" aria-hidden />
+                      ) : (
+                        <ArrowUpDown className="size-3 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  </TableHead>
                   <TableHead className="text-[11px] text-slate-500">Тип / метод</TableHead>
                   <TableHead aria-sort={sort?.key === "size" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className="text-right">
                     <button
@@ -1742,7 +1905,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                           : idx % 2 === 1
                             ? "bg-slate-950/40"
                             : ""
-                      }`}
+                      } ${pinnedIds.has(p.id) ? "border-l-2 border-l-amber-400/70" : ""}`}
                     >
                       <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400 tabular-nums">
                         {fmtTime(p.ts)}
@@ -2073,6 +2236,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
         onOpenChange={setSheetOpen}
         detail={detail}
         loading={detailLoading}
+        pinned={selected ? pinnedIds.has(selected.id) : false}
+        onTogglePin={togglePin}
       />
 
       <SessionInspector
@@ -2108,8 +2273,35 @@ function ScenarioResults({ result }: { result: ScenarioResult }) {
     [result.perProtocol]
   );
   const protoTotal = protoDeltas.reduce((acc, [, n]) => acc + n, 0);
-  if (hidden) return null;
   const pps = Math.round((result.packets / result.durationSec) * 10) / 10;
+  // Экспорт итогов сценария: файл генерируется на клиенте — итоги живут только в UI
+  const exportScenario = (format: "csv" | "jsonl") => {
+    const stamp = fmtClock(result.startedAt).replace(/:/g, "");
+    if (format === "csv") {
+      // Excel-CSV («;», BOM) — как серверные csv-экспорты
+      const rows: string[] = [
+        ["Итоги сценария", result.label, `длительность ${result.durationSec} с`].join(";"),
+        ["Пакетов", result.packets, "пак/с", pps].join(";"),
+        ["Байт", result.bytes, "Тревог", result.alerts, "Невалидных", result.invalid].join(";"),
+        "",
+        "Протокол;Рост пакетов",
+        ...protoDeltas.map(([proto, n]) => `${proto};+${n}`),
+      ];
+      downloadText(`\uFEFF${rows.join("\n")}\n`, `scenario_${result.id}_${stamp}.csv`, "text/csv;charset=utf-8");
+    } else {
+      const lines = [
+        JSON.stringify({ type: "meta", id: result.id, label: result.label, startedAt: result.startedAt, durationSec: result.durationSec }),
+        JSON.stringify({ type: "delta", packets: result.packets, pps, bytes: result.bytes, alerts: result.alerts, invalid: result.invalid }),
+        ...protoDeltas.map(([proto, n]) => JSON.stringify({ type: "protocol", protocol: proto, delta: n })),
+      ];
+      downloadText(`${lines.join("\n")}\n`, `scenario_${result.id}_${stamp}.jsonl`, "application/jsonl");
+    }
+    toast.success(`Итоги сценария выгружены — ${format.toUpperCase()}`, {
+      description: `${fmtCompact(result.packets)} пакетов за ${result.durationSec} с, протоколов: ${protoDeltas.length}.`,
+      duration: 2500,
+    });
+  };
+  if (hidden) return null;
   return (
     <div
       role="status"
@@ -2127,14 +2319,35 @@ function ScenarioResults({ result }: { result: ScenarioResult }) {
             {result.durationSec}с
           </Badge>
         </span>
-        <button
-          type="button"
-          onClick={() => setHidden(true)}
-          aria-label="Скрыть итоги сценария"
-          className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
-        >
-          <X className="size-3.5" aria-hidden />
-        </button>
+        <span className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => exportScenario("csv")}
+            aria-label="Экспорт итогов сценария в CSV"
+            title="Экспорт итогов сценария в CSV (Excel) — «;», дельты + протоколы"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+          >
+            <FileSpreadsheet className="size-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => exportScenario("jsonl")}
+            aria-label="Экспорт итогов сценария в JSONL"
+            title="Экспорт итогов сценария в JSONL — meta, дельты, протоколы"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+          >
+            <FileJson className="size-3.5" aria-hidden />
+          </button>
+          <span aria-hidden className="mx-0.5 h-4 w-px bg-slate-700" />
+          <button
+            type="button"
+            onClick={() => setHidden(true)}
+            aria-label="Скрыть итоги сценария"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </span>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
         <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
