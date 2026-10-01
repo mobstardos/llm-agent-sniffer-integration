@@ -21,6 +21,10 @@ import {
   FileSpreadsheet,
   Copy,
   FileSearch,
+  Radio,
+  Volume2,
+  VolumeX,
+  ChevronDown,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -59,11 +63,22 @@ import {
   useSnifferStream,
   type Packet,
   type Alert,
+  type Session,
 } from "@/hooks/use-sniffer-stream";
 import { PpsChart, type ChartMetric } from "@/components/dashboard/pps-chart";
 import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
 import { Sparkline } from "@/components/dashboard/sparkline";
-import { fmtBytes, fmtClock, fmtTime, fmtCompact, fmtRate, protocolColor } from "@/lib/format";
+import { SessionInspector } from "@/components/dashboard/session-inspector";
+import { playCritBeep, playConfirmBlip } from "@/lib/sound";
+import {
+  fmtBytes,
+  fmtClock,
+  fmtTime,
+  fmtCompact,
+  fmtRate,
+  protocolColor,
+  protocolDot,
+} from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
 
@@ -86,6 +101,7 @@ function StatCard({
   sub,
   icon: Icon,
   alert,
+  critPulse,
   spark,
 }: {
   label: string;
@@ -93,6 +109,7 @@ function StatCard({
   sub?: string;
   icon: React.ComponentType<{ className?: string }>;
   alert?: boolean;
+  critPulse?: boolean;
   spark?: React.ReactNode;
 }) {
   return (
@@ -101,13 +118,13 @@ function StatCard({
         alert
           ? "border-red-500/40 hover:border-red-500/60"
           : "hover:border-emerald-500/40"
-      }`}
+      } ${critPulse ? "shadow-[0_0_24px_-8px] shadow-red-500/50" : ""}`}
     >
       <CardContent className="flex items-center gap-3 p-4">
         <span
           className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105 ${
             alert ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"
-          }`}
+          } ${critPulse ? "animate-pulse" : ""}`}
         >
           <Icon className={`size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
         </span>
@@ -304,9 +321,14 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [metric, setMetric] = useState<ChartMetric>("pps");
   const [scenarioBusy, setScenarioBusy] = useState<ScenarioId | "stop" | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [inspectorRaw, setInspectorRaw] = useState<Session | null>(null);
+  const [inspectorId, setInspectorId] = useState<string | null>(null);
+  const [soundOn, setSoundOn] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(MAX_TABLE_ROWS);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tableCardRef = useRef<HTMLDivElement>(null);
   const alertToastSeenRef = useRef<string | null>(null);
+  const soundSeenRef = useRef<string | null>(null);
 
   // Тосты по живым алертам (если не в mute) — реагируем только на новые id
   useEffect(() => {
@@ -323,6 +345,24 @@ export function SnifferTab({ live }: SnifferTabProps) {
       }
     }
   }, [alerts, muted]);
+
+  // Звук критических тревог (WebAudio, если включён тумблером)
+  useEffect(() => {
+    if (!soundOn || alerts.length === 0) return;
+    const latest = alerts[0];
+    if (latest.severity !== "crit") return;
+    if (soundSeenRef.current === latest.id) return;
+    const t = new Date(latest.createdAt).getTime();
+    if (Date.now() - t < 2500) {
+      soundSeenRef.current = latest.id;
+      playCritBeep();
+    }
+  }, [alerts, soundOn]);
+
+  // Сброс пагинации при смене фильтров
+  useEffect(() => {
+    setVisibleCount(MAX_TABLE_ROWS);
+  }, [search, protocol, direction, minSize, maxSize]);
 
   // Тикаем часы для обратного отсчёта сценария
   useEffect(() => {
@@ -443,6 +483,20 @@ export function SnifferTab({ live }: SnifferTabProps) {
     });
   };
 
+  const handleSoundToggle = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    if (next) {
+      playConfirmBlip();
+      toast("Звук критических тревог включён", {
+        description: "Двухтональный сигнал при каждом CRIT-алерте.",
+        duration: 2500,
+      });
+    } else {
+      toast("Звук тревог выключен", { duration: 2000 });
+    }
+  };
+
   const filtered = useMemo(() => {
     const source = paused && frozenPackets ? frozenPackets : packets;
     const s = search.trim().toLowerCase();
@@ -461,9 +515,28 @@ export function SnifferTab({ live }: SnifferTabProps) {
     });
   }, [packets, frozenPackets, paused, search, protocol, direction, minSize, maxSize]);
 
-  const display = filtered.slice(0, MAX_TABLE_ROWS);
+  const display = filtered.slice(0, visibleCount);
   const latestAlerts = alerts.slice(0, 50);
   const sessionList = sessions.slice(0, 12);
+
+  // Свежая сессия для инспектора (SSE обновляет счётчики/состояние), фолбэк на снимок
+  const inspectorSession = useMemo(() => {
+    if (!inspectorId) return null;
+    return sessions.find((s) => s.id === inspectorId) ?? inspectorRaw;
+  }, [inspectorId, sessions, inspectorRaw]);
+
+  // Пульс тревожной карточки: был CRIT за последние 15с
+  const critPulse = useMemo(() => {
+    const lastCrit = alerts.find((a) => a.severity === "crit");
+    if (!lastCrit) return false;
+    return Date.now() - new Date(lastCrit.createdAt).getTime() < 15000;
+  }, [alerts]);
+
+  // Чипы быстрого фильтра протоколов (из живой статистики)
+  const protoChips = useMemo(() => {
+    if (!stats) return [] as [string, number][];
+    return Object.entries(stats.perProtocol).sort((a, b) => b[1] - a[1]);
+  }, [stats]);
 
   // Активные фильтры → чипы с быстрым сбросом
   const chips = useMemo(() => {
@@ -518,6 +591,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
           value={stats ? String(stats.alertsCount) : "—"}
           sub="правила config.json"
           alert={(stats?.alertsCount ?? 0) > 0}
+          critPulse={critPulse}
         />
       </div>
 
@@ -824,9 +898,9 @@ export function SnifferTab({ live }: SnifferTabProps) {
                 </Badge>
               )}
             </span>
-            {filtered.length > MAX_TABLE_ROWS && (
+            {filtered.length > display.length && (
               <span className="text-[11px] font-normal text-slate-500">
-                показаны последние {MAX_TABLE_ROWS} из {fmtCompact(filtered.length)}
+                показаны {display.length} из {fmtCompact(filtered.length)}
               </span>
             )}
           </CardTitle>
@@ -873,6 +947,38 @@ export function SnifferTab({ live }: SnifferTabProps) {
           </DropdownMenu>
         </CardHeader>
         <CardContent className="p-0 pb-2">
+          {/* Быстрые фильтры каналов с живыми счётчиками */}
+          {protoChips.length > 0 && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/60 px-4 py-2"
+              role="toolbar"
+              aria-label="Быстрый фильтр по протоколам"
+            >
+              <span className="mr-1 text-[10px] uppercase tracking-wider text-slate-500">
+                Каналы:
+              </span>
+              {protoChips.map(([name, count]) => {
+                const active = protocol === name;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => setProtocol(active ? "all" : name)}
+                    aria-pressed={active}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                      active
+                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200"
+                        : "border-slate-700/70 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                    }`}
+                  >
+                    <span className={`size-1.5 rounded-full ${protocolDot(name)}`} aria-hidden />
+                    {name}
+                    <span className="tabular-nums text-slate-500">{fmtCompact(count)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div className="max-h-[60vh] overflow-y-auto custom-scroll">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-slate-900 shadow-[0_1px_0_0_theme(colors.slate.800)]">
@@ -910,7 +1016,11 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       key={p.id}
                       onClick={() => onRowClick(p)}
                       className={`cursor-pointer border-slate-800/70 hover:bg-slate-800/60 ${
-                        idx % 2 === 1 ? "bg-slate-950/40" : ""
+                        !p.valid
+                          ? "bg-red-500/[0.05]"
+                          : idx % 2 === 1
+                            ? "bg-slate-950/40"
+                            : ""
                       }`}
                     >
                       <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400 tabular-nums">
@@ -952,14 +1062,47 @@ export function SnifferTab({ live }: SnifferTabProps) {
               </TableBody>
             </Table>
           </div>
+          {/* Подгрузка истории пакетов */}
+          {filtered.length > display.length && (
+            <div className="flex flex-wrap items-center justify-center gap-2 border-t border-slate-800/60 px-4 py-2.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setVisibleCount((c) => Math.min(c + MAX_TABLE_ROWS, filtered.length))
+                }
+                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-300"
+              >
+                <ChevronDown className="size-3.5" aria-hidden />
+                Показать ещё {Math.min(MAX_TABLE_ROWS, filtered.length - display.length)}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setVisibleCount(filtered.length)}
+                className="min-h-[36px] px-2 text-[11px] text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+              >
+                показать все ({fmtCompact(filtered.length)})
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Сессии + Тревоги */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="border-slate-800 bg-slate-900/60">
-          <CardHeader className="p-4 pb-2">
-            <CardTitle className="text-sm text-slate-200">Сессии</CardTitle>
+          <CardHeader className="flex-row items-center justify-between p-4 pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+              Сессии
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0 font-mono text-[10px] text-emerald-400"
+              >
+                активных: {sessions.filter((s) => s.state === "active").length}
+              </Badge>
+            </CardTitle>
+            <span className="text-[10px] text-slate-500">клик — инспектор сессии</span>
           </CardHeader>
           <CardContent className="p-0 pb-2">
             <div className="max-h-64 overflow-y-auto custom-scroll">
@@ -986,14 +1129,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
                     sessionList.map((s) => (
                       <TableRow
                         key={s.id}
-                        onClick={() => filterByClient(s.client)}
-                        title="Нажмите — фильтровать таблицу пакетов по клиенту"
+                        onClick={() => {
+                          setInspectorRaw(s);
+                          setInspectorId(s.id);
+                        }}
+                        title="Открыть инспектор сессии — все пакеты в одном листе"
                         className="cursor-pointer border-slate-800/70 transition-colors hover:bg-emerald-500/5"
                       >
                         <TableCell className="py-2 pl-4 font-mono text-xs text-slate-200">
                           <span className="inline-flex items-center gap-1.5">
                             {s.client}
-                            <FileSearch className="size-3 text-slate-600" aria-hidden />
+                            <Radio className="size-3 text-slate-600" aria-hidden />
                           </span>
                         </TableCell>
                         <TableCell className="max-w-[120px] truncate py-2 text-xs text-slate-300">
@@ -1032,8 +1178,42 @@ export function SnifferTab({ live }: SnifferTabProps) {
 
         <Card className="border-slate-800 bg-slate-900/60">
           <CardHeader className="flex-row items-center justify-between p-4 pb-2">
-            <CardTitle className="text-sm text-slate-200">Тревоги</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+              Тревоги
+              {latestAlerts.some((a) => a.severity === "crit") && (
+                <Badge
+                  variant="outline"
+                  className="border-red-500/40 bg-red-500/10 px-1.5 py-0 font-mono text-[10px] text-red-400"
+                >
+                  crit: {latestAlerts.filter((a) => a.severity === "crit").length}
+                </Badge>
+              )}
+            </CardTitle>
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleSoundToggle}
+                aria-pressed={soundOn}
+                aria-label={soundOn ? "Выключить звук критических тревог" : "Включить звук критических тревог"}
+                title={soundOn ? "Звук CRIT-тревог: вкл" : "Звук CRIT-тревог: выкл"}
+                className={`h-8 w-8 p-0 ${
+                  soundOn
+                    ? "text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+                    : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                }`}
+              >
+                {soundOn ? (
+                  <Volume2 className="size-4" aria-hidden />
+                ) : (
+                  <VolumeX className="size-4" aria-hidden />
+                )}
+              </Button>
+              <span
+                role="separator"
+                aria-orientation="vertical"
+                className="h-5 w-px bg-slate-800"
+              />
               {muted ? (
                 <BellOff className="size-4 text-slate-500" aria-hidden />
               ) : (
@@ -1092,6 +1272,20 @@ export function SnifferTab({ live }: SnifferTabProps) {
         onOpenChange={setSheetOpen}
         detail={detail}
         loading={detailLoading}
+      />
+
+      <SessionInspector
+        key={inspectorId ?? "none"}
+        session={inspectorSession}
+        open={inspectorSession !== null}
+        onOpenChange={(v) => {
+          if (!v) {
+            setInspectorId(null);
+            setInspectorRaw(null);
+          }
+        }}
+        livePackets={packets}
+        onFilterByClient={filterByClient}
       />
     </div>
   );

@@ -45,7 +45,7 @@ export function DashboardHeader({ connected, connecting, retrySec }: HeaderProps
   };
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950">
+    <header className="header-hairline sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10">

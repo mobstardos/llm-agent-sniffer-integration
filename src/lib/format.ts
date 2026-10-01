@@ -54,3 +54,17 @@ export const PROTOCOL_COLORS: Record<string, string> = {
 export function protocolColor(protocol: string): string {
   return PROTOCOL_COLORS[protocol] ?? PROTOCOL_COLORS.RAW;
 }
+
+/** Цвета точек-индикаторов протоколов (чипы быстрого фильтра) */
+export const PROTOCOL_DOT_COLORS: Record<string, string> = {
+  REMOTE_SERVER: "bg-emerald-400",
+  THRIFT: "bg-violet-400",
+  HTTP: "bg-orange-400",
+  JSON: "bg-yellow-400",
+  MODBUS: "bg-teal-400",
+  RAW: "bg-slate-400",
+};
+
+export function protocolDot(protocol: string): string {
+  return PROTOCOL_DOT_COLORS[protocol] ?? PROTOCOL_DOT_COLORS.RAW;
+}

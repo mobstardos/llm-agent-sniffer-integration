@@ -1,0 +1,1195 @@
+     1→/**
+     2→ * Synthetic Sniffer Hub — in-memory имитация UniversalSniffer v3.1.
+     3→ *
+     4→ * Полностью повторяет архитектуру реального сниффера:
+     5→ *  - кольцевые буферы пакетов/алертов, сессии, посекундная статистика;
+     6→ *  - генератор трафика ~5 pps с направлениями TX/RX;
+     7→ *  - движок алертов с правилами из config.json (cooldown 30с, пороги);
+     8→ *  - персистентность алертов в Prisma (SQLite).
+     9→ *
+    10→ * Синглтон на globalThis — переживает HMR при разработке.
+    11→ * Используется ТОЛЬКО на сервере (route handlers).
+    12→ */
+    13→
+    14→import { db } from "@/lib/db";
+    15→
+    16→// ---------------------------------------------------------------------------
+    17→// Типы
+    18→// ---------------------------------------------------------------------------
+    19→
+    20→export type Direction = "TX" | "RX";
+    21→
+    22→export type Protocol =
+    23→  | "REMOTE_SERVER"
+    24→  | "THRIFT"
+    25→  | "HTTP"
+    26→  | "JSON"
+    27→  | "MODBUS"
+    28→  | "RAW";
+    29→
+    30→export type PortName =
+    31→  | "RemoteServer TCP"
+    32→  | "Thrift RPC"
+    33→  | "HTTP API"
+    34→  | "Modbus TCP"
+    35→  | "RAW";
+    36→
+    37→export interface Packet {
+    38→  id: number;
+    39→  ts: string; // ISO
+    40→  direction: Direction;
+    41→  client: string; // "10.8.0.51:41234"
+    42→  portName: PortName; // канал (listener реального сниффера)
+    43→  protocol: Protocol;
+    44→  msgType?: string; // CALL | REPLY | EXCEPTION | REQUEST | RESPONSE | ...
+    45→  methodType?: string; // DB_REQUEST | CASHLESS_PAY | CASHLESS_ROLLBACK | ...
+    46→  method?: string; // имя thrift-метода, напр. sendTanksState
+    47→  cmdType?: string;
+    48→  cmdClass?: number;
+    49→  cmd?: number;
+    50→  size: number;
+    51→  valid: boolean;
+    52→  summary: string; // человекочитаемое резюме
+    53→  hexPreview: string; // hexdump первых 128 байт
+    54→}
+    55→
+    56→export interface Session {
+    57→  id: string;
+    58→  client: string;
+    59→  portName: PortName;
+    60→  protocol: Protocol;
+    61→  startedAt: string;
+    62→  txPackets: number;
+    63→  rxPackets: number;
+    64→  txBytes: number;
+    65→  rxBytes: number;
+    66→  state: "active" | "closing" | "closed";
+    67→}
+    68→
+    69→export interface Alert {
+    70→  id: string;
+    71→  rule: string;
+    72→  severity: "info" | "warn" | "crit";
+    73→  message: string;
+    74→  protocol?: string;
+    75→  client?: string;
+    76→  packetId?: number;
+    77→  createdAt: string;
+    78→}
+    79→
+    80→export interface SeriesPoint {
+    81→  ts: string;
+    82→  pps: number;
+    83→  bps: number;
+    84→}
+    85→
+    86→export interface SnifferStats {
+    87→  startedAt: string;
+    88→  uptimeSec: number;
+    89→  totalPackets: number;
+    90→  totalBytes: number;
+    91→  activeSessions: number;
+    92→  totalSessions: number;
+    93→  alertsCount: number;
+    94→  perProtocol: Record<string, number>;
+    95→  topMethods: { name: string; count: number }[];
+    96→  topClients: { name: string; count: number }[];
+    97→  lastPps: number;
+    98→  lastBps: number;
+    99→  invalidPackets: number;
+   100→}
+   101→
+   102→export type HubEvent =
+   103→  | { type: "packet"; payload: Packet }
+   104→  | { type: "session"; payload: Session }
+   105→  | { type: "alert"; payload: Alert }
+   106→  | { type: "scenario"; payload: ScenarioState | null }
+   107→  | { type: "stats"; payload: SnifferStats };
+   108→
+   109→export type HubListener = (ev: HubEvent) => void;
+   110→
+   111→// ---------------------------------------------------------------------------
+   112→// Сценарии трафика (демо-режимы генератора)
+   113→// ---------------------------------------------------------------------------
+   114→
+   115→export type ScenarioId = "azs_burst" | "thrift_storm" | "giant_attack" | "rollback_loop";
+   116→
+   117→export interface ScenarioDef {
+   118→  id: ScenarioId;
+   119→  label: string;
+   120→  description: string;
+   121→  durationSec: number;
+   122→}
+   123→
+   124→export interface ScenarioState {
+   125→  id: ScenarioId;
+   126→  label: string;
+   127→  endsAt: string; // ISO
+   128→}
+   129→
+   130→export const SCENARIOS: ScenarioDef[] = [
+   131→  {
+   132→    id: "azs_burst",
+   133→    label: "АЗС-всплеск",
+   134→    description: "Массовый опрос кассовых АЗС: x4 пакет/с в канале RemoteServer TCP",
+   135→    durationSec: 45,
+   136→  },
+   137→  {
+   138→    id: "thrift_storm",
+   139→    label: "Thrift-шторм",
+   140→    description: "Поток Thrift-исключений EXCEPTION — правило «Thrift EXCEPTION» срабатывает часто",
+   141→    durationSec: 30,
+   142→  },
+   143→  {
+   144→    id: "giant_attack",
+   145→    label: "Гигантские пакеты",
+   146→    description: "Каждый пакет > 1 МБ — спам правила «Гигантский пакет»",
+   147→    durationSec: 20,
+   148→  },
+   149→  {
+   150→    id: "rollback_loop",
+   151→    label: "Откаты оплаты",
+   152→    description: "Серии CASHLESS_ROLLBACK — срабатывает правило «Откат безналичной оплаты»",
+   153→    durationSec: 25,
+   154→  },
+   155→];
+   156→
+   157→// ---------------------------------------------------------------------------
+   158→// Константы, отражающие config.json реального сниффера
+   159→// ---------------------------------------------------------------------------
+   160→
+   161→const PACKETS_CAP = 5000;
+   162→const ALERTS_CAP = 500;
+   163→const SERIES_CAP = 300;
+   164→const GEN_INTERVAL_MS = 200; // тик генератора (~5 пакетов/с)
+   165→
+   166→const ALERT_COOLDOWN_MS = 30_000;
+   167→const ROLLBACK_WINDOW_MS = 60_000;
+   168→const ROLLBACK_THRESHOLD = 2;
+   169→const GIANT_SIZE = 1_000_000;
+   170→
+   171→const CMD_TYPES: Record<string, string> = {
+   172→  "0:1": "HANDSHAKE",
+   173→  "0:2": "SERVICE",
+   174→  "50:5": "REPL_UP_1",
+   175→  "50:6": "REPL_UP_2",
+   176→  "200:1": "SESSION_VAR",
+   177→  "200:2": "EXTRA_REQ",
+   178→  "200:3": "QUICK_NO_DB",
+   179→  "200:4": "EXTRA_REQ_2",
+   180→  "200:5": "EXTRA_REQ_3",
+   181→  "200:100": "DB_REQUEST",
+   182→  "200:110": "CASHLESS_PAY",
+   183→  "200:111": "CASHLESS_ROLLBACK",
+   184→  "200:120": "SEND_TANKS_STATE",
+   185→  "200:130": "GET_CONFIG",
+   186→};
+   187→
+   188→const REMOTE_CMD_POOL: { c: number; d: number }[] = [
+   189→  { c: 0, d: 1 },
+   190→  { c: 0, d: 2 },
+   191→  { c: 200, d: 1 },
+   192→  { c: 200, d: 2 },
+   193→  { c: 200, d: 3 },
+   194→  { c: 200, d: 100 },
+   195→  { c: 200, d: 110 },
+   196→  { c: 200, d: 111 },
+   197→  { c: 200, d: 120 },
+   198→  { c: 200, d: 130 },
+   199→  { c: 50, d: 5 },
+   200→];
+   201→
+   202→const THRIFT_METHODS = [
+   203→  "sendTanksState",
+   204→  "getPrices",
+   205→  "sendShiftReport",
+   206→  "getNozzlesState",
+   207→  "sendCounterState",
+   208→  "getDiscountCards",
+   209→];
+   210→
+   211→const HTTP_PATHS = [
+   212→  "/api/v1/tanks",
+   213→  "/api/v1/nozzles",
+   214→  "/api/v1/prices",
+   215→  "/api/v1/shifts",
+   216→  "/api/v1/payments",
+   217→  "/api/v1/health",
+   218→  "/api/v1/sessions",
+   219→];
+   220→
+   221→const KNOWN_TABLES = [
+   222→  "dcTanks",
+   223→  "dcAzs",
+   224→  "dcNozzles",
+   225→  "rgPrices",
+   226→  "opOperations",
+   227→  "sysSessions",
+   228→  "sysExchangeLog",
+   229→];
+   230→
+   231→const JSON_EVENTS = [
+   232→  "tank.state",
+   233→  "price.changed",
+   234→  "shift.opened",
+   235→  "payment.accepted",
+   236→  "counter.update",
+   237→];
+   238→
+   239→const CLIENT_POOL = [
+   240→  "10.8.0.51",
+   241→  "10.8.0.52",
+   242→  "10.8.0.77",
+   243→  "172.16.4.20",
+   244→  "172.16.4.21",
+   245→  "192.168.10.5",
+   246→];
+   247→
+   248→// ---------------------------------------------------------------------------
+   249→// Утилиты
+   250→// ---------------------------------------------------------------------------
+   251→
+   252→function pick<T>(arr: readonly T[]): T {
+   253→  return arr[Math.floor(Math.random() * arr.length)];
+   254→}
+   255→
+   256→function weightedPick<T>(entries: readonly [T, number][]): T {
+   257→  const total = entries.reduce((s, [, w]) => s + w, 0);
+   258→  let r = Math.random() * total;
+   259→  for (const [v, w] of entries) {
+   260→    r -= w;
+   261→    if (r <= 0) return v;
+   262→  }
+   263→  return entries[entries.length - 1][0];
+   264→}
+   265→
+   266→function randInt(min: number, max: number): number {
+   267→  return Math.floor(Math.random() * (max - min + 1)) + min;
+   268→}
+   269→
+   270→/** Классический hexdump в стиле xxd/hd (как parsers/hexdump.py) */
+   271→export function hexdump(data: Uint8Array, maxBytes?: number): string {
+   272→  const limit = maxBytes ? Math.min(data.length, maxBytes) : data.length;
+   273→  const lines: string[] = [];
+   274→  const HEX = "0123456789abcdef";
+   275→  for (let off = 0; off < limit; off += 16) {
+   276→    const chunk = data.subarray(off, Math.min(off + 16, limit));
+   277→    let hex = "";
+   278→    let ascii = "";
+   279→    for (let i = 0; i < 16; i++) {
+   280→      if (i < chunk.length) {
+   281→        const b = chunk[i];
+   282→        hex += HEX[(b >> 4) & 0xf] + HEX[b & 0xf] + (i === 7 ? "  " : " ");
+   283→        ascii += b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".";
+   284→      } else {
+   285→        hex += "   ";
+   286→        ascii += " ";
+   287→      }
+   288→    }
+   289→    lines.push(
+   290→      off.toString(16).padStart(8, "0") + "  " + hex + " |" + ascii + "|"
+   291→    );
+   292→  }
+   293→  if (data.length > limit) {
+   294→    lines.push(
+   295→      `... (${data.length - limit} байт обрезано; всего ${data.length} Б)`
+   296→    );
+   297→  }
+   298→  return lines.join("\n");
+   299→}
+   300→
+   301→function newId(): string {
+   302→  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+   303→}
+   304→
+   305→// ---------------------------------------------------------------------------
+   306→// Генерация пакетов по протоколам (формат вывода parsers реального сниффера)
+   307→// ---------------------------------------------------------------------------
+   308→
+   309→interface PacketDraft {
+   310→  packet: Omit<Packet, "id" | "ts" | "hexPreview">;
+   311→  body: Uint8Array; // тело для hexdump
+   312→}
+   313→
+   314→function draftRemoteServer(
+   315→  client: string,
+   316→  direction: Direction,
+   317→  force?: { c: number; d: number }
+   318→): PacketDraft {
+   319→  const cmd = force ?? pick(REMOTE_CMD_POOL);
+   320→  const key = `${cmd.c}:${cmd.d}`;
+   321→  const cmdType = CMD_TYPES[key] ?? "UNKNOWN";
+   322→  const session = randInt(100000, 999999);
+   323→  const txid = randInt(1000, 99999);
+   324→  const valid = Math.random() > 0.03;
+   325→
+   326→  // Реальный заголовок: len(4LE) + MAGIC AA AA 00 00 + версия
+   327→  const header = new Uint8Array([
+   328→    randInt(0, 255),
+   329→    randInt(0, 255),
+   330→    randInt(0, 255),
+   331→    randInt(0, 255),
+   332→    0xaa,
+   333→    0xaa,
+   334→    0x00,
+   335→    0x00,
+   336→    0x02,
+   337→  ]);
+   338→  let bodyStr = `RequestCmdClass${cmd.c}RequestCmd${cmd.d}SessionNum${session}TransactionID${txid}`;
+   339→  if (cmdType === "DB_REQUEST" && Math.random() < 0.07) {
+   340→    bodyStr += ` query=SELECT * FROM ${pick(KNOWN_TABLES)}; -- error: table locked`;
+   341→  } else if (cmdType === "DB_REQUEST") {
+   342→    bodyStr += ` query=SELECT id,name FROM ${pick(KNOWN_TABLES)} LIMIT 50`;
+   343→  }
+   344→  if (cmdType === "SEND_TANKS_STATE") {
+   345→    bodyStr += ` tanks=[{tank:1,fuel:AI-95,level:${randInt(1000, 5000)}}]`;
+   346→  }
+   347→  bodyStr += ` ${pick(KNOWN_TABLES)}`;
+   348→  const body = new TextEncoder().encode(bodyStr.slice(0, 900));
+   349→  const full = new Uint8Array(header.length + body.length);
+   350→  full.set(header, 0);
+   351→  full.set(body, header.length);
+   352→
+   353→  const parts: string[] = [
+   354→    `[RemoteServer TCP] REMOTE_SERVER ${cmdType} (C=${cmd.c},D=${cmd.d})`,
+   355→  ];
+   356→  if (Math.random() < 0.7) parts.push(`S=${session}`);
+   357→  if (Math.random() < 0.5) parts.push(`TX=${txid}`);
+   358→  if (Math.random() < 0.25) parts.push("zlib");
+   359→
+   360→  return {
+   361→    packet: {
+   362→      direction,
+   363→      client,
+   364→      portName: "RemoteServer TCP",
+   365→      protocol: "REMOTE_SERVER",
+   366→      cmdType,
+   367→      cmdClass: cmd.c,
+   368→      cmd: cmd.d,
+   369→      size: full.length + randInt(60, 8000),
+   370→      valid,
+   371→      summary: parts.join(" "),
+   372→    },
+   373→    body: full,
+   374→  };
+   375→}
+   376→
+   377→function draftThrift(
+   378→  client: string,
+   379→  direction: Direction,
+   380→  seqRef: { seq: number }
+   381→): PacketDraft {
+   382→  const method = pick(THRIFT_METHODS);
+   383→  const roll = Math.random();
+   384→  // В обычном режиме EXCEPTION ~6%; в сценарии «Thrift-шторм» — ~30%
+   385→  const exceptionRate = S.scenario?.id === "thrift_storm" ? 0.3 : 0.06;
+   386→  const msgType =
+   387→    roll >= exceptionRate
+   388→      ? direction === "TX"
+   389→        ? "CALL"
+   390→        : "REPLY"
+   391→      : "EXCEPTION";
+   392→  seqRef.seq += 1;
+   393→  const seq = seqRef.seq;
+   394→  const valid = msgType !== "EXCEPTION";
+   395→
+   396→  let payload = "";
+   397→  if (msgType === "CALL") {
+   398→    payload = `${method} seq=${seq} args={stationId:${randInt(1, 250)}, strict:true}`;
+   399→  } else if (msgType === "REPLY") {
+   400→    payload = `${method} seq=${seq} success=true result={items:${randInt(0, 120)}}`;
+   401→  } else {
+   402→    payload = `${method} seq=${seq} TApplicationException: Internal error processing ${method} (tank ${randInt(1, 8)} timeout)`;
+   403→  }
+   404→  const body = new TextEncoder().encode(payload);
+   405→
+   406→  return {
+   407→    packet: {
+   408→      direction,
+   409→      client,
+   410→      portName: "Thrift RPC",
+   411→      protocol: "THRIFT",
+   412→      msgType,
+   413→      method,
+   414→      size: body.length + randInt(80, 6000),
+   415→      valid,
+   416→      summary: `[Thrift RPC] THRIFT ${msgType} ${method} (seq=${seq})`,
+   417→    },
+   418→    body,
+   419→  };
+   420→}
+   421→
+   422→function draftHttp(client: string, direction: Direction): PacketDraft {
+   423→  const method = Math.random() < 0.6 ? "GET" : "POST";
+   424→  const path = pick(HTTP_PATHS);
+   425→  const status = pick([200, 200, 200, 204, 400, 404, 500]);
+   426→  const isResp = direction === "RX";
+   427→  const firstLine = isResp
+   428→    ? `HTTP/1.1 ${status} ${status === 200 ? "OK" : status === 204 ? "No Content" : status === 400 ? "Bad Request" : status === 404 ? "Not Found" : "Internal Server Error"}`
+   429→    : `${method} ${path} HTTP/1.1`;
+   430→  const body = new TextEncoder().encode(
+   431→    `${firstLine}\r\nHost: azs-core.local\r\nContent-Type: application/json\r\n\r\n{"ok":${status < 400}}`
+   432→  );
+   433→  return {
+   434→    packet: {
+   435→      direction,
+   436→      client,
+   437→      portName: "HTTP API",
+   438→      protocol: "HTTP",
+   439→      msgType: isResp ? "RESPONSE" : "REQUEST",
+   440→      method: isResp ? `HTTP ${status}` : method,
+   441→      size: body.length + randInt(120, 12000),
+   442→      valid: status < 500,
+   443→      summary: `[HTTP API] HTTP ${isResp ? `RESPONSE ${status}` : `REQUEST ${method} ${path}`}`,
+   444→    },
+   445→    body,
+   446→  };
+   447→}
+   448→
+   449→function draftJson(client: string, direction: Direction): PacketDraft {
+   450→  const ev = pick(JSON_EVENTS);
+   451→  const station = randInt(1, 250);
+   452→  const body = new TextEncoder().encode(
+   453→    `{"event":"${ev}","ts":${Date.now()},"station":${station},"value":${randInt(1, 9999)},"unit":"L"}`
+   454→  );
+   455→  return {
+   456→    packet: {
+   457→      direction,
+   458→      client,
+   459→      portName: "HTTP API",
+   460→      protocol: "JSON",
+   461→      msgType: "EVENT",
+   462→      method: ev,
+   463→      size: body.length + randInt(50, 3000),
+   464→      valid: Math.random() > 0.02,
+   465→      summary: `[HTTP API] JSON ${ev} (station=${station})`,
+   466→    },
+   467→    body,
+   468→  };
+   469→}
+   470→
+   471→function draftModbus(client: string, direction: Direction): PacketDraft {
+   472→  const func = pick([3, 4, 6]);
+   473→  const unit = randInt(1, 24);
+   474→  const addr = randInt(0x0000, 0x0fff);
+   475→  const qty = randInt(1, 32);
+   476→  const value = randInt(0, 65535);
+   477→  const isResp = direction === "RX";
+   478→  const body =
+   479→    isResp && func === 6
+   480→      ? new Uint8Array([
+   481→          unit,
+   482→          func,
+   483→          (addr >> 8) & 0xff,
+   484→          addr & 0xff,
+   485→          (value >> 8) & 0xff,
+   486→          value & 0xff,
+   487→        ])
+   488→      : new Uint8Array([
+   489→          unit,
+   490→          func,
+   491→          (addr >> 8) & 0xff,
+   492→          addr & 0xff,
+   493→          (qty >> 8) & 0xff,
+   494→          qty & 0xff,
+   495→        ]);
+   496→  const msgType = isResp ? "RESPONSE" : "REQUEST";
+   497→  const detail =
+   498→    func === 3 || func === 4
+   499→      ? `read ${isResp ? `${qty} reg` : "holding"} addr=0x${addr
+   500→          .toString(16)
+   501→          .padStart(4, "0")}`
+   502→      : `write addr=0x${addr.toString(16).padStart(4, "0")} value=${value}`;
+   503→  return {
+   504→    packet: {
+   505→      direction,
+   506→      client,
+   507→      portName: "Modbus TCP",
+   508→      protocol: "MODBUS",
+   509→      msgType,
+   510→      methodType: `FUNC_${func}`,
+   511→      method: `func=${func}`,
+   512→      size: body.length + randInt(0, 300),
+   513→      valid: Math.random() > 0.05,
+   514→      summary: `[Modbus TCP] MODBUS ${msgType} func=${func} ${detail} unit=${unit}`,
+   515→    },
+   516→    body,
+   517→  };
+   518→}
+   519→
+   520→function draftRaw(client: string, direction: Direction): PacketDraft {
+   521→  const body = new Uint8Array(randInt(40, 400));
+   522→  for (let i = 0; i < body.length; i++) body[i] = randInt(0, 255);
+   523→  return {
+   524→    packet: {
+   525→      direction,
+   526→      client,
+   527→      portName: "RAW",
+   528→      protocol: "RAW",
+   529→      msgType: "UNKNOWN",
+   530→      size: body.length,
+   531→      valid: Math.random() > 0.15,
+   532→      summary: `[RAW] HEXDUMP неопознанный трафик (${body.length} Б)`,
+   533→    },
+   534→    body,
+   535→  };
+   536→}
+   537→
+   538→// ---------------------------------------------------------------------------
+   539→// Состояние хаба (синглтон на globalThis)
+   540→// ---------------------------------------------------------------------------
+   541→
+   542→interface HubState {
+   543→  packets: Packet[];
+   544→  sessions: Map<string, Session>;
+   545→  alerts: Alert[];
+   546→  series: SeriesPoint[];
+   547→  listeners: Set<HubListener>;
+   548→  genTimer: ReturnType<typeof setInterval> | null;
+   549→  statsTimer: ReturnType<typeof setInterval> | null;
+   550→  sessionTimer: ReturnType<typeof setInterval> | null;
+   551→  epoch: number; // версия кода генератора (для перезапуска таймеров после HMR)
+   552→  nextPacketId: number;
+   553→  totalPackets: number;
+   554→  totalBytes: number;
+   555→  totalSessions: number;
+   556→  invalidPackets: number;
+   557→  perProtocol: Record<string, number>;
+   558→  methodCounter: Map<string, number>;
+   559→  clientCounter: Map<string, number>;
+   560→  secondPackets: number;
+   561→  secondBytes: number;
+   562→  rollbackTimes: number[];
+   563→  thriftSeq: number;
+   564→  startedAt: string;
+   565→  lastPps: number;
+   566→  lastBps: number;
+   567→  alertCooldown: Map<string, number>;
+   568→  scenario: ScenarioState | null;
+   569→}
+   570→
+   571→function createHubState(): HubState {
+   572→  return {
+   573→    packets: [],
+   574→    sessions: new Map(),
+   575→    alerts: [],
+   576→    series: [],
+   577→    listeners: new Set(),
+   578→    genTimer: null,
+   579→    statsTimer: null,
+   580→    sessionTimer: null,
+   581→    epoch: 0,
+   582→    nextPacketId: 1,
+   583→    totalPackets: 0,
+   584→    totalBytes: 0,
+   585→    totalSessions: 0,
+   586→    invalidPackets: 0,
+   587→    perProtocol: {},
+   588→    methodCounter: new Map(),
+   589→    clientCounter: new Map(),
+   590→    secondPackets: 0,
+   591→    secondBytes: 0,
+   592→    rollbackTimes: [],
+   593→    thriftSeq: 0,
+   594→    startedAt: new Date().toISOString(),
+   595→    lastPps: 0,
+   596→    lastBps: 0,
+   597→    alertCooldown: new Map(),
+   598→    scenario: null,
+   599→  };
+   600→}
+   601→
+   602→const globalForHub = globalThis as unknown as {
+   603→  __snifferHubState?: HubState;
+   604→};
+   605→
+   606→const S: HubState = globalForHub.__snifferHubState ?? createHubState();
+   607→globalForHub.__snifferHubState = S;
+   608→
+   609→// Если состояние пережило HMR от предыдущей версии кода — останавливаем
+   610→// таймеры старых замыканий, чтобы новые версии tick()/makePacket() вступили в силу
+   611→const MODULE_EPOCH = 5;
+   612→if (S.epoch !== MODULE_EPOCH) {
+   613→  if (S.genTimer) {
+   614→    clearInterval(S.genTimer);
+   615→    S.genTimer = null;
+   616→  }
+   617→  if (S.statsTimer) {
+   618→    clearInterval(S.statsTimer);
+   619→    S.statsTimer = null;
+   620→  }
+   621→  if (S.sessionTimer) {
+   622→    clearInterval(S.sessionTimer);
+   623→    S.sessionTimer = null;
+   624→  }
+   625→  S.epoch = MODULE_EPOCH;
+   626→}
+   627→
+   628→function emit(ev: HubEvent): void {
+   629→  for (const listener of S.listeners) {
+   630→    try {
+   631→      listener(ev);
+   632→    } catch {
+   633→      // слушатель мог отвалиться — игнорируем
+   634→    }
+   635→  }
+   636→}
+   637→
+   638→function unref(timer: unknown): void {
+   639→  if (timer && typeof timer === "object" && "unref" in timer) {
+   640→    (timer as { unref: () => void }).unref();
+   641→  }
+   642→}
+   643→
+   644→// ------------------------- сессии ------------------------------------------
+   645→
+   646→const PROTOCOL_BY_PORT: Record<PortName, Protocol> = {
+   647→  "RemoteServer TCP": "REMOTE_SERVER",
+   648→  "Thrift RPC": "THRIFT",
+   649→  "HTTP API": "HTTP",
+   650→  "Modbus TCP": "MODBUS",
+   651→  RAW: "RAW",
+   652→};
+   653→
+   654→function randomClientAddr(): string {
+   655→  return `${pick(CLIENT_POOL)}:${randInt(32768, 61000)}`;
+   656→}
+   657→
+   658→function openSession(): void {
+   659→  const active = [...S.sessions.values()].filter((s) => s.state === "active");
+   660→  if (active.length >= 7) return;
+   661→  // Сначала добираем отсутствующие каналы, чтобы демо показывало все протоколы,
+   662→  // затем взвешенный выбор как в config.json
+   663→  const present = new Set(active.map((s) => s.portName));
+   664→  const missing = (Object.keys(PROTOCOL_BY_PORT) as PortName[]).filter(
+   665→    (p) => !present.has(p)
+   666→  );
+   667→  let portName: PortName;
+   668→  if (missing.length > 0 && (active.length < 5 || Math.random() < 0.5)) {
+   669→    portName = missing[Math.floor(Math.random() * missing.length)];
+   670→  } else {
+   671→    portName = weightedPick<PortName>([
+   672→      ["RemoteServer TCP", 45],
+   673→      ["Thrift RPC", 30],
+   674→      ["HTTP API", 15],
+   675→      ["Modbus TCP", 8],
+   676→      ["RAW", 2],
+   677→    ]);
+   678→  }
+   679→  // Подбираем свободный адрес (ip:port), до 5 попыток
+   680→  for (let attempt = 0; attempt < 5; attempt++) {
+   681→    const client = randomClientAddr();
+   682→    const key = `${client}|${portName}`;
+   683→    if (S.sessions.has(key)) continue;
+   684→    const session: Session = {
+   685→      id: newId(),
+   686→      client,
+   687→      portName,
+   688→      protocol: PROTOCOL_BY_PORT[portName],
+   689→      startedAt: new Date().toISOString(),
+   690→      txPackets: 0,
+   691→      rxPackets: 0,
+   692→      txBytes: 0,
+   693→      rxBytes: 0,
+   694→      state: "active",
+   695→    };
+   696→    S.sessions.set(key, session);
+   697→    S.totalSessions += 1;
+   698→    emit({ type: "session", payload: session });
+   699→    return;
+   700→  }
+   701→}
+   702→
+   703→function maintainSessions(): void {
+   704→  const active = [...S.sessions.values()].filter((s) => s.state === "active");
+   705→  if (active.length < 3 && Math.random() < 0.7) openSession();
+   706→  else if (active.length < 7 && Math.random() < 0.3) openSession();
+   707→  if (active.length > 3 && Math.random() < 0.15) {
+   708→    const victim = pick(active);
+   709→    victim.state = "closing";
+   710→    emit({ type: "session", payload: victim });
+   711→    const key = [...S.sessions.entries()].find(
+   712→      ([, s]) => s.id === victim.id
+   713→    )?.[0];
+   714→    if (key) {
+   715→      setTimeout(() => {
+   716→        const s = S.sessions.get(key);
+   717→        if (s && s.state === "closing") {
+   718→          s.state = "closed";
+   719→          emit({ type: "session", payload: s });
+   720→          setTimeout(() => {
+   721→            if (S.sessions.get(key)?.state === "closed") S.sessions.delete(key);
+   722→          }, 5000);
+   723→        }
+   724→      }, 3000);
+   725→    }
+   726→  }
+   727→  // страховка от разрастания карты
+   728→  if (S.sessions.size > 60) {
+   729→    for (const [k, s] of S.sessions) {
+   730→      if (s.state === "closed") S.sessions.delete(k);
+   731→      if (S.sessions.size <= 40) break;
+   732→    }
+   733→  }
+   734→}
+   735→
+   736→function trackSession(packet: Packet): void {
+   737→  const key = `${packet.client}|${packet.portName}`;
+   738→  let session = S.sessions.get(key);
+   739→  if (!session) {
+   740→    // Прямой ingest без сессии (fallback) — учитываем в счетчиках,
+   741→    // но не плодим новые сессии сверх лимита
+   742→    const activeCount = [...S.sessions.values()].filter(
+   743→      (s) => s.state === "active"
+   744→    ).length;
+   745→    if (activeCount >= 8) return;
+   746→    session = {
+   747→      id: newId(),
+   748→      client: packet.client,
+   749→      portName: packet.portName,
+   750→      protocol: packet.protocol,
+   751→      startedAt: packet.ts,
+   752→      txPackets: 0,
+   753→      rxPackets: 0,
+   754→      txBytes: 0,
+   755→      rxBytes: 0,
+   756→      state: "active",
+   757→    };
+   758→    S.sessions.set(key, session);
+   759→    S.totalSessions += 1;
+   760→    emit({ type: "session", payload: session });
+   761→  }
+   762→  if (packet.direction === "TX") {
+   763→    session.txPackets += 1;
+   764→    session.txBytes += packet.size;
+   765→  } else {
+   766→    session.rxPackets += 1;
+   767→    session.rxBytes += packet.size;
+   768→  }
+   769→}
+   770→
+   771→// ------------------------- алерты ------------------------------------------
+   772→
+   773→function raiseAlert(
+   774→  rule: string,
+   775→  severity: "info" | "warn" | "crit",
+   776→  message: string,
+   777→  packet?: Packet
+   778→): void {
+   779→  const alert: Alert = {
+   780→    id: newId(),
+   781→    rule,
+   782→    severity,
+   783→    message,
+   784→    protocol: packet?.protocol,
+   785→    client: packet?.client,
+   786→    packetId: packet?.id,
+   787→    createdAt: new Date().toISOString(),
+   788→  };
+   789→  S.alerts.push(alert);
+   790→  if (S.alerts.length > ALERTS_CAP) {
+   791→    S.alerts.splice(0, S.alerts.length - ALERTS_CAP);
+   792→  }
+   793→  emit({ type: "alert", payload: alert });
+   794→  // Персистентность — аналог capture/alerts.jsonl реального сниффера
+   795→  void db.snifferAlert
+   796→    .create({
+   797→      data: {
+   798→        rule: alert.rule,
+   799→        severity: alert.severity,
+   800→        message: alert.message,
+   801→        protocol: alert.protocol ?? null,
+   802→        client: alert.client ?? null,
+   803→        packetId: alert.packetId ?? null,
+   804→      },
+   805→    })
+   806→    .catch(() => undefined);
+   807→}
+   808→
+   809→function checkAlertRules(packet: Packet): void {
+   810→  const now = Date.now();
+   811→
+   812→  const cooldownFor = (rule: string): number => {
+   813→    // В рамках сценариев частота тревог повышается — иначе шторм не виден
+   814→    if (S.scenario?.id === "thrift_storm" && rule === "Thrift EXCEPTION") return 6_000;
+   815→    if (S.scenario?.id === "giant_attack" && rule === "Гигантский пакет") return 7_000;
+   816→    if (S.scenario?.id === "rollback_loop" && rule === "Откат безналичной оплаты") return 12_000;
+   817→    return ALERT_COOLDOWN_MS;
+   818→  };
+   819→
+   820→  const fire = (rule: string, cooldownMs: number): boolean => {
+   821→    const last = S.alertCooldown.get(rule) ?? 0;
+   822→    if (now - last < cooldownMs) return false;
+   823→    S.alertCooldown.set(rule, now);
+   824→    return true;
+   825→  };
+   826→
+   827→  // 1. Thrift EXCEPTION — crit
+   828→  if (packet.protocol === "THRIFT" && packet.msgType === "EXCEPTION") {
+   829→    if (fire("Thrift EXCEPTION", cooldownFor("Thrift EXCEPTION"))) {
+   830→      raiseAlert(
+   831→        "Thrift EXCEPTION",
+   832→        "crit",
+   833→        `Thrift-исключение в ${packet.method ?? "методе"}: TApplicationException (пакет #${packet.id})`,
+   834→        packet
+   835→      );
+   836→    }
+   837→  }
+   838→
+   839→  // 2. Откат безналичной оплаты — crit, порог 2 за 60с
+   840→  if (packet.methodType === "CASHLESS_ROLLBACK") {
+   841→    S.rollbackTimes.push(now);
+   842→    S.rollbackTimes = S.rollbackTimes.filter(
+   843→      (t) => now - t <= ROLLBACK_WINDOW_MS
+   844→    );
+   845→    if (S.rollbackTimes.length >= ROLLBACK_THRESHOLD) {
+   846→      if (fire("Откат безналичной оплаты", cooldownFor("Откат безналичной оплаты"))) {
+   847→        S.rollbackTimes = [];
+   848→        raiseAlert(
+   849→          "Откат безналичной оплаты",
+   850→          "crit",
+   851→          `Обнаружено ${ROLLBACK_THRESHOLD} отката CASHLESS_ROLLBACK за ${ROLLBACK_WINDOW_MS / 1000}с — требуется проверка кассовой логики`,
+   852→          packet
+   853→        );
+   854→      }
+   855→    }
+   856→  }
+   857→
+   858→  // 3. Гигантский пакет — warn
+   859→  if (packet.size > GIANT_SIZE) {
+   860→    if (fire("Гигантский пакет", cooldownFor("Гигантский пакет"))) {
+   861→      raiseAlert(
+   862→        "Гигантский пакет",
+   863→        "warn",
+   864→        `Размер пакета ${(packet.size / 1_000_000).toFixed(2)} МБ превышает порог 1 000 000 Б`,
+   865→        packet
+   866→      );
+   867→    }
+   868→  }
+   869→
+   870→  // 4. Ошибка БД в запросе — warn (DB_REQUEST + «error» в полезной нагрузке)
+   871→  if (
+   872→    packet.cmdType === "DB_REQUEST" &&
+   873→    packet.summary.toLowerCase().includes("error")
+   874→  ) {
+   875→    if (fire("Ошибка БД в запросе", ALERT_COOLDOWN_MS)) {
+   876→      raiseAlert(
+   877→        "Ошибка БД в запросе",
+   878→        "warn",
+   879→        `DB_REQUEST содержит «error» — вероятно, сбой выполнения SQL (пакет #${packet.id})`,
+   880→        packet
+   881→      );
+   882→    }
+   883→  }
+   884→}
+   885→
+   886→// ------------------------- генератор ---------------------------------------
+   887→
+   888→function makePacket(scenarioId?: ScenarioId): Packet {
+   889→  // Пакет привязан к одной из активных сессий (как в реальном прокси):
+   890→  // стабильный клиент ip:port на время жизни сессии, протокол = канал сессии
+   891→  const active = [...S.sessions.values()].filter((s) => s.state === "active");
+   892→  const session = active.length > 0 ? pick(active) : null;
+   893→  const client = session ? session.client : randomClientAddr();
+   894→  const direction: Direction = Math.random() < 0.55 ? "TX" : "RX";
+   895→  let protocol: Protocol = session
+   896→    ? session.protocol
+   897→    : weightedPick<Protocol>([
+   898→        ["REMOTE_SERVER", 45],
+   899→        ["THRIFT", 30],
+   900→        ["HTTP", 10],
+   901→        ["JSON", 8],
+   902→        ["MODBUS", 5],
+   903→        ["RAW", 2],
+   904→      ]);
+   905→
+   906→  // Профиль сценария: смещаем протокол/направление
+   907→  if (scenarioId === "azs_burst") {
+   908→    protocol = Math.random() < 0.8 ? "REMOTE_SERVER" : protocol;
+   909→  } else if (scenarioId === "thrift_storm") {
+   910→    protocol = "THRIFT";
+   911→  } else if (scenarioId === "giant_attack") {
+   912→    // протокол любой, размер зададим ниже
+   913→  }
+   914→
+   915→  let draft: PacketDraft;
+   916→  switch (protocol) {
+   917→    case "REMOTE_SERVER":
+   918→      draft = draftRemoteServer(client, direction);
+   919→      break;
+   920→    case "THRIFT": {
+   921→      const seqRef = { seq: S.thriftSeq };
+   922→      draft = draftThrift(client, direction, seqRef);
+   923→      S.thriftSeq = seqRef.seq;
+   924→      break;
+   925→    }
+   926→    case "HTTP":
+   927→      draft = draftHttp(client, direction);
+   928→      break;
+   929→    case "JSON":
+   930→      draft = draftJson(client, direction);
+   931→      break;
+   932→    case "MODBUS":
+   933→      draft = draftModbus(client, direction);
+   934→      break;
+   935→    default:
+   936→      draft = draftRaw(client, direction);
+   937→  }
+   938→
+   939→  // редкие гигантские пакеты (~0.5%) или сценарий «Гигантские пакеты»
+   940→  if (scenarioId === "giant_attack") {
+   941→    draft.packet.size = randInt(1_100_000, 1_500_000);
+   942→  } else if (Math.random() < 0.005) {
+   943→    draft.packet.size = randInt(1_100_000, 1_400_000);
+   944→  }
+   945→
+   946→  return {
+   947→    id: S.nextPacketId++,
+   948→    ts: new Date().toISOString(),
+   949→    hexPreview: hexdump(draft.body, 128),
+   950→    ...draft.packet,
+   951→  };
+   952→}
+   953→
+   954→function ingest(packet: Packet): void {
+   955→  S.packets.push(packet);
+   956→  if (S.packets.length > PACKETS_CAP) {
+   957→    S.packets.splice(0, S.packets.length - PACKETS_CAP);
+   958→  }
+   959→  S.totalPackets += 1;
+   960→  S.totalBytes += packet.size;
+   961→  S.secondPackets += 1;
+   962→  S.secondBytes += packet.size;
+   963→  if (!packet.valid) S.invalidPackets += 1;
+   964→  S.perProtocol[packet.protocol] = (S.perProtocol[packet.protocol] ?? 0) + 1;
+   965→
+   966→  const methodKey =
+   967→    packet.methodType ?? packet.method ?? packet.msgType ?? packet.protocol;
+   968→  S.methodCounter.set(methodKey, (S.methodCounter.get(methodKey) ?? 0) + 1);
+   969→  S.clientCounter.set(packet.client, (S.clientCounter.get(packet.client) ?? 0) + 1);
+   970→
+   971→  trackSession(packet);
+   972→  checkAlertRules(packet);
+   973→  emit({ type: "packet", payload: packet });
+   974→}
+   975→
+   976→function tick(): void {
+   977→  // Сценарии: множитель пакетов/профиль протокола
+   978→  const sc = S.scenario;
+   979→  if (sc && Date.now() > new Date(sc.endsAt).getTime()) {
+   980→    // Сценарий самозавершился по таймеру
+   981→    S.scenario = null;
+   982→    emit({ type: "scenario", payload: null });
+   983→  }
+   984→
+   985→  const scenarioId = S.scenario?.id;
+   986→  const multiplier = scenarioId === "azs_burst" ? 4 : 1;
+   987→  for (let i = 0; i < multiplier; i++) {
+   988→    ingest(makePacket(scenarioId));
+   989→  }
+   990→
+   991→  if (scenarioId === "rollback_loop") {
+   992→    // Серии откатов на каждом тике — правило срабатывает нон-стоп
+   993→    const active = [...S.sessions.values()].filter((s) => s.state === "active");
+   994→    const rollbackClient = active.length > 0 ? pick(active).client : randomClientAddr();
+   995→    for (let i = 0; i < 2; i++) {
+   996→      const d = draftRemoteServer(rollbackClient, "TX", { c: 200, d: 111 });
+   997→      ingest({
+   998→        id: S.nextPacketId++,
+   999→        ts: new Date().toISOString(),
+  1000→        hexPreview: hexdump(d.body, 128),
+  1001→        ...d.packet,
+  1002→      });
+  1003→    }
+  1004→  }
+  1005→
+  1006→  // Редкие всплески откатов безналичной оплаты (~2% тиков) вне сценария:
+  1007→  // 2-3 пакета CASHLESS_ROLLBACK подряд — срабатывает правило алерта
+  1008→  if (!scenarioId && Math.random() < 0.02) {
+  1009→    const burst = randInt(2, 3);
+  1010→    const active = [...S.sessions.values()].filter((s) => s.state === "active");
+  1011→    const rollbackClient =
+  1012→      active.length > 0
+  1013→        ? pick(active).client
+  1014→        : randomClientAddr();
+  1015→    for (let i = 0; i < burst; i++) {
+  1016→      const d = draftRemoteServer(rollbackClient, "TX", { c: 200, d: 111 });
+  1017→      ingest({
+  1018→        id: S.nextPacketId++,
+  1019→        ts: new Date().toISOString(),
+  1020→        hexPreview: hexdump(d.body, 128),
+  1021→        ...d.packet,
+  1022→      });
+  1023→    }
+  1024→  }
+  1025→}
+  1026→
+  1027→function statsTick(): void {
+  1028→  S.series.push({
+  1029→    ts: new Date().toISOString(),
+  1030→    pps: S.secondPackets,
+  1031→    bps: S.secondBytes,
+  1032→  });
+  1033→  if (S.series.length > SERIES_CAP) {
+  1034→    S.series.splice(0, S.series.length - SERIES_CAP);
+  1035→  }
+  1036→  S.lastPps = S.secondPackets;
+  1037→  S.lastBps = S.secondBytes;
+  1038→  S.secondPackets = 0;
+  1039→  S.secondBytes = 0;
+  1040→  emit({ type: "stats", payload: getStats() });
+  1041→}
+  1042→
+  1043→// ------------------------- публичный API -----------------------------------
+  1044→
+  1045→export function getStats(): SnifferStats {
+  1046→  const top = (m: Map<string, number>, n: number) =>
+  1047→    [...m.entries()]
+  1048→      .sort((a, b) => b[1] - a[1])
+  1049→      .slice(0, n)
+  1050→      .map(([name, count]) => ({ name, count }));
+  1051→
+  1052→  return {
+  1053→    startedAt: S.startedAt,
+  1054→    uptimeSec: Math.floor(
+  1055→      (Date.now() - new Date(S.startedAt).getTime()) / 1000
+  1056→    ),
+  1057→    totalPackets: S.totalPackets,
+  1058→    totalBytes: S.totalBytes,
+  1059→    activeSessions: [...S.sessions.values()].filter(
+  1060→      (s) => s.state === "active"
+  1061→    ).length,
+  1062→    totalSessions: S.totalSessions,
+  1063→    alertsCount: S.alerts.length,
+  1064→    perProtocol: { ...S.perProtocol },
+  1065→    topMethods: top(S.methodCounter, 8),
+  1066→    topClients: top(S.clientCounter, 8),
+  1067→    lastPps: S.lastPps,
+  1068→    lastBps: S.lastBps,
+  1069→    invalidPackets: S.invalidPackets,
+  1070→  };
+  1071→}
+  1072→
+  1073→export function ensureRunning(): void {
+  1074→  if (S.genTimer === null) {
+  1075→    S.genTimer = setInterval(tick, GEN_INTERVAL_MS);
+  1076→    unref(S.genTimer);
+  1077→  }
+  1078→  if (S.statsTimer === null) {
+  1079→    S.statsTimer = setInterval(statsTick, 1000);
+  1080→    unref(S.statsTimer);
+  1081→  }
+  1082→  if (S.sessionTimer === null) {
+  1083→    S.sessionTimer = setInterval(maintainSessions, 7000);
+  1084→    unref(S.sessionTimer);
+  1085→    openSession();
+  1086→    openSession();
+  1087→    openSession();
+  1088→  }
+  1089→}
+  1090→
+  1091→export function subscribe(listener: HubListener): () => void {
+  1092→  ensureRunning();
+  1093→  S.listeners.add(listener);
+  1094→  return () => {
+  1095→    S.listeners.delete(listener);
+  1096→  };
+  1097→}
+  1098→
+  1099→export function getRecentPackets(limit = 200): Packet[] {
+  1100→  return S.packets.slice(-limit).reverse();
+  1101→}
+  1102→
+  1103→export function getPacketById(id: number): Packet | undefined {
+  1104→  return S.packets.find((p) => p.id === id);
+  1105→}
+  1106→
+  1107→export function getSessions(): Session[] {
+  1108→  return [...S.sessions.values()].sort(
+  1109→    (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+  1110→  );
+  1111→}
+  1112→
+  1113→export function getLiveAlerts(limit = 100): Alert[] {
+  1114→  return S.alerts.slice(-limit).reverse();
+  1115→}
+  1116→
+  1117→export function getSeries(): SeriesPoint[] {
+  1118→  return [...S.series];
+  1119→}
+  1120→
+  1121→// ------------------------- сценарии ----------------------------------------
+  1122→
+  1123→export function getScenario(): ScenarioState | null {
+  1124→  if (!S.scenario) return null;
+  1125→  // Просроченный сценарий не возвращаем (чистим лениво)
+  1126→  if (Date.now() > new Date(S.scenario.endsAt).getTime()) return null;
+  1127→  return S.scenario;
+  1128→}
+  1129→
+  1130→export function startScenario(id: ScenarioId): ScenarioState | null {
+  1131→  const def = SCENARIOS.find((s) => s.id === id);
+  1132→  if (!def) return null;
+  1133→  const state: ScenarioState = {
+  1134→    id: def.id,
+  1135→    label: def.label,
+  1136→    endsAt: new Date(Date.now() + def.durationSec * 1000).toISOString(),
+  1137→  };
+  1138→  S.scenario = state;
+  1139→  emit({ type: "scenario", payload: state });
+  1140→  return state;
+  1141→}
+  1142→
+  1143→export function stopScenario(): ScenarioState | null {
+  1144→  const prev = S.scenario;
+  1145→  S.scenario = null;
+  1146→  emit({ type: "scenario", payload: null });
+  1147→  return prev;
+  1148→}
+  1149→
+  1150→export function getFullHexdump(packet: Packet): string {
+  1151→  // Для демо: синтезируем до 2КБ данных на основе packet.summary
+  1152→  const header = new TextEncoder().encode(packet.summary);
+  1153→  const total = Math.min(packet.size, 2048);
+  1154→  const buf = new Uint8Array(total);
+  1155→  buf.set(header.subarray(0, Math.min(header.length, total)), 0);
+  1156→  // магия RemoteServer в начале, если применимо
+  1157→  if (packet.protocol === "REMOTE_SERVER") {
+  1158→    buf[4] = 0xaa;
+  1159→    buf[5] = 0xaa;
+  1160→    buf[6] = 0x00;
+  1161→    buf[7] = 0x00;
+  1162→  }
+  1163→  for (let i = Math.min(header.length, total); i < total; i++) {
+  1164→    buf[i] = randInt(0, 255);
+  1165→  }
+  1166→  return hexdump(buf);
+  1167→}
+  1168→
+  1169→export async function resetHub(): Promise<void> {
+  1170→  S.packets.length = 0;
+  1171→  S.sessions.clear();
+  1172→  S.alerts.length = 0;
+  1173→  S.series.length = 0;
+  1174→  S.nextPacketId = 1;
+  1175→  S.totalPackets = 0;
+  1176→  S.totalBytes = 0;
+  1177→  S.totalSessions = 0;
+  1178→  S.invalidPackets = 0;
+  1179→  S.perProtocol = {};
+  1180→  S.methodCounter.clear();
+  1181→  S.clientCounter.clear();
+  1182→  S.secondPackets = 0;
+  1183→  S.secondBytes = 0;
+  1184→  S.rollbackTimes = [];
+  1185→  S.alertCooldown.clear();
+  1186→  S.startedAt = new Date().toISOString();
+  1187→  S.lastPps = 0;
+  1188→  S.lastBps = 0;
+  1189→  S.scenario = null;
+  1190→  ensureRunning();
+  1191→  openSession();
+  1192→  openSession();
+  1193→  openSession();
+  1194→}
+  1195→

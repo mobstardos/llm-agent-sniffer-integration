@@ -119,6 +119,36 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Фирменное выделение текста в изумрудной гамме панели */
+  ::selection {
+    background-color: rgb(16 185 129 / 0.3);
+    color: rgb(236 253 245);
+  }
+  /* Тонкий скроллбар по умолчанию в Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.42 0 0) transparent;
+  }
+}
+
+/* Изумрудная линия-хайрлайн под sticky-хедером */
+.header-hairline {
+  position: relative;
+}
+.header-hairline::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgb(16 185 129 / 0.45) 30%,
+    rgb(16 185 129 / 0.45) 70%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* Тёмная тема панели: изумрудный primary (TX-семантика реального сниффера) */
