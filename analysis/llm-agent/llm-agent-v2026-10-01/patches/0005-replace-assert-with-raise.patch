@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Патч: замена assert на явные исключения в продакшен-коде
+# Рекомендация 5 (Sprint 2, P1)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Контекст: в src/ найдены 4 assert-выражения в проде (отчёт §8):
+#   - src/llm_client.py:184        assert last_exc is not None
+#   - src/mcp_servers/lsp/client.py:111  assert self.process
+#   - src/mcp_servers/lsp/client.py:160  assert self.process and self.process.stdin
+#   - harness/tests/test_scenarios.py:33  (тестовый код — оставляем)
+#
+# Проблема: Python с флагом -O (или -OO) удаляет assert-выражения.
+# Это превратит invariant-checks в молчаливые nop, что может привести
+# к NaN-like ошибкам в проде (TypeError: cannot raise NoneType).
+#
+# Решение: заменить assert на явные `if not ...: raise RuntimeError(...)`
+# с понятным сообщением для дебага.
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Применить патч:
+#   cd /path/to/llm-agent
+#   git apply patches/0005-replace-assert-with-raise.patch
+#   # или вручную: применить три правки ниже
+#
+# После применения: прогнать ruff + mypy, запустить smoke-тест.
+# ═══════════════════════════════════════════════════════════════════════
+
+--- a/src/llm_client.py
++++ b/src/llm_client.py
+@@ -181,7 +181,9 @@
+                 continue
+ 
+-        assert last_exc is not None
++        if last_exc is None:
++            # Не должно случаться: attempts[] не пуст и мы либо вернули
++            # результат, либо упали в except — last_exc обязательно задан.
++            raise RuntimeError(
++                "LLMClient: retry loop exhausted without exception "
++                "(attempts=%d)" % len(attempts)
++            )
+         raise last_exc
+ 
+     # ── Одна попытка вызова конкретной модели ────────────────────────
+
+--- a/src/mcp_servers/lsp/client.py
++++ b/src/mcp_servers/lsp/client.py
+@@ -108,7 +110,9 @@
+     async def _read_loop(self):
+-        assert self.process
++        if self.process is None:
++            raise RuntimeError(
++                "LSPClient._read_loop: process not started "
++                "(call .start() first)"
++            )
+         stream = self.process.stdout
+         if stream is None:
+             return
+
+--- a/src/mcp_servers/lsp/client.py
++++ b/src/mcp_servers/lsp/client.py
+@@ -157,7 +161,9 @@
+     async def _send(self, msg: dict):
+-        assert self.process and self.process.stdin
++        if self.process is None or self.process.stdin is None:
++            raise RuntimeError(
++                "LSPClient._send: process not started or stdin closed "
++                "(call .start() and check process.stdin)"
++            )
+         body = json.dumps(msg).encode("utf-8")
+         header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+         self.process.stdin.write(header + body)
+
+--- a/harness/tests/test_scenarios.py
++++ b/harness/tests/test_scenarios.py
+@@ -30,7 +30,7 @@
+ # В тестах assert ОК — pytest с флагом --assert=plain использует
+ # свой re-implementation. Не трогаем.
+-    assert result.passed, (
++    assert result.passed, (

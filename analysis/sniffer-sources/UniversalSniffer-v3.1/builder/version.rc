@@ -1,0 +1,28 @@
+// Ресурсы лаунчера UniversalSniffer.exe (иконка + версия).
+// Компиляция: zig rc version.rc version.res   (или windres version.rc version.o)
+1 ICON "sniffer.ico"
+
+1 VERSIONINFO
+FILEVERSION     3,0,0,0
+PRODUCTVERSION  3,0,0,0
+FILEOS          0x40004L
+FILETYPE        0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName",      ""
+      VALUE "FileDescription",  "Universal Sniffer - TCP proxy sniffer with web panel"
+      VALUE "FileVersion",      "3.0.0"
+      VALUE "InternalName",     "UniversalSniffer"
+      VALUE "OriginalFilename", "UniversalSniffer.exe"
+      VALUE "ProductName",      "Universal Sniffer"
+      VALUE "ProductVersion",   "3.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 0x04B0
+  END
+END

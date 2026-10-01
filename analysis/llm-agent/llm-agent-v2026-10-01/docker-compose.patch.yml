@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════════════════════════════════
+# docker-compose.patch.yml — патч к оригинальному docker-compose.yml
+# Рекомендация 10 (Sprint 4, P2) — добавляет сервис llm-agent
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Использование:
+#   # 1. Объединить с оригинальным docker-compose.yml (merge):
+#   docker compose -f docker-compose.yml -f docker-compose.patch.yml up -d
+#
+#   # 2. Или скопировать оригинал в docker-compose.override.yml
+#   cp docker-compose.patch.yml docker-compose.override.yml
+#   docker compose up -d
+#
+# Что добавляет:
+#   - сервис llm-agent (основное приложение, порт 8000)
+#   - volumes для data/, logs/, shadows/ (персистентность между рестартами)
+#   - depends_on на postgres (для PG-бэкенда памяти)
+#   - healthcheck через /api/db/health
+#   - restart: unless-stopped (надёжность)
+#   - logging через journald (не раздувает stdout)
+# ═══════════════════════════════════════════════════════════════════════
+
+services:
+  llm-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llm-agent:latest
+    container_name: llm-agent
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      # ─── Сервер ────────────────────────────────────────────────────
+      HOST: 0.0.0.0
+      PORT: 8000
+      PROJECT_ROOT: /app
+
+      # ─── PostgreSQL (используем сервис postgres из того же compose) ──
+      PG_APP_HOST: postgres
+      PG_APP_PORT: 5432
+      PG_APP_USER: llmagent
+      PG_APP_PASSWORD: secret
+      PG_APP_DATABASE: llmagent
+      PG_ENABLED: "true"
+      PG_REPLICATE: "1"
+      AGENT_MEMORY: "1"
+
+      # ─── AGE (через сервис age-postgres на порту 5433) ────────────
+      AGE_HOST: age-postgres
+      AGE_PORT: 5433
+
+      # ─── Kafka (CDC) ────────────────────────────────────────────────
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+      # ─── AI-модели (заполнить через .env файл или секреты) ──────────
+      # DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+
+      # ─── Производительность ────────────────────────────────────────
+      BACKUP_ENABLED: "true"
+      BACKUP_INTERVAL_HOURS: "24"
+      BACKUP_KEEP_LAST: "7"
+
+    volumes:
+      # Персистентные данные (выживают между рестартами контейнера)
+      - llmagent_data:/app/data
+      - llmagent_logs:/app/logs
+      - llmagent_shadows:/app/shadows
+      # .env файл для секретов (только для чтения)
+      - ./.env:/app/.env:ro
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      age-postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/db/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s  # первый минутный старт + миграции
+      retries: 5
+
+    logging:
+      driver: journald  # или: json-file с size-лимитом
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Ресурсы — лимиты для предотвращения OOM-killer
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cplicas: 0.5  # 50% CPU
+        reservations:
+          memory: 512m
+
+    networks:
+      - default
+
+volumes:
+  llmagent_data:    # /app/data — SQLite-базы, LanceDB, сессии, профили
+  llmagent_logs:    # /app/logs — логи приложения
+  llmagent_shadows: # /app/shadows — теневые копии файлов для журнала
+
+networks:
+  default:
+    # Использует сеть по умолчанию — postgres, age-postgres, kafka уже в ней
+    driver: bridge

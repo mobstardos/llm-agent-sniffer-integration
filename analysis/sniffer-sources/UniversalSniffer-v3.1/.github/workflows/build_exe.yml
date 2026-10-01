@@ -1,0 +1,40 @@
+name: build-exe
+
+# Автоматическая сборка Windows-exe: PyInstaller one-file.
+# Артефакт появляется во вкладке Actions, на тегах v* — ещё и в Release.
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установка PyInstaller
+        run: python -m pip install "pyinstaller>=6.0"
+
+      - name: Сборка UniversalSniffer.exe
+        run: python -m PyInstaller --noconfirm --clean builder/sniffer.spec
+
+      - name: Smoke-проверка
+        run: dist\UniversalSniffer.exe --version
+
+      - name: Загрузка артефакта
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniversalSniffer-windows-exe
+          path: dist/UniversalSniffer.exe
+
+      - name: Вложение в Release (только на тегах)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/UniversalSniffer.exe

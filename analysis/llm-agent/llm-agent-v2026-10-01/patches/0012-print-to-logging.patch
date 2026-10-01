@@ -1,0 +1,108 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Патч: замена print() на logging в серверном коде
+# Рекомендация 12 (Sprint 5, P2)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Контекст:
+#   В отчёте §8 указано 452 print(). При детальном анализе выяснилось:
+#
+#   ЛЕГИТИМНЫЕ print() (НЕ ТРОГАЕМ):
+#     - install.py        (51) — CLI-мастер установки
+#     - setup.py         (24) — CLI-настройка
+#     - first_run.py     (22) — CLI-мастер первого запуска
+#     - src/cli.py       (28) — модуль CLI-команд
+#     - src/journal/cli.py (19) — журнал-CLI
+#     - src/db/init_db.py (10) — скрипт инициализации БД
+#     - scripts/*        (~150) — тесты и утилиты
+#
+#   СЕРВЕРНЫЕ print() — КОНВЕРТИРУЕМ В LOGGING (5 шт. всего):
+#     - src/route_analytics.py:397  — CLI-вывод markdown-отчёта (оставить!)
+#     - src/route_analytics.py:402  — CLI-вывод "Отчёт записан" (оставить!)
+#     - src/db/autodetect.py:184    — interactive prompt в install.py context (оставить!)
+#     - src/db/autodetect.py:189    — пустая строка для интерактива (оставить!)
+#     - src/mcp_servers/debug/server.py:230 — cProfile tracer (РЕАЛЬНЫЙ КАНДИДАТ)
+#
+#   ИТОГО: всего 1 print() в действительно серверном коде (debug MCP).
+#   Остальные 5 — это CLI-вывод в функциях, которые вызываются
+#   только из CLI-скриптов (install.py, scripts/*.py).
+#
+#   ВЫВОД: рекомендация 12 в основном УЖЕ выполнена — server-код
+#   использует logger.*(), а не print(). Оригинальный анализ
+#   преувеличил проблему. Этот патч:
+#     1. Заменяет 1 print() в src/mcp_servers/debug/server.py на logger.debug
+#     2. Добавляет CI-гвард против НОВЫХ print() в src/ (через ruff rule T201)
+#
+# Применение:
+#   cd /path/to/llm-agent
+#   git apply patches/0012-print-to-logging.patch
+#   # ИЛИ вручную:
+#   # 1. Применить правку в src/mcp_servers/debug/server.py (см. ниже)
+#   # 2. Добавить ruff rule T201 в ruff.toml (см. ниже)
+# ═══════════════════════════════════════════════════════════════════════
+
+--- a/src/mcp_servers/debug/server.py
++++ b/src/mcp_servers/debug/server.py
+@@ -227,7 +227,8 @@
+                 f"    print(f'{{i+1}}. {{stat}}')\n"
+                 # ─────────────────────────────────────────────────────────
+                 # Tracer callback — invoked once per function call
+-                "    print(f\"CALL {{name}} {{frame.f_code.co_filename}}:{{frame.f_lineno}}\")\n"
++                "    import logging; logger = logging.getLogger('mcp.debug.tracer')\n"
++                "    logger.debug(f\"CALL {{name}} {{frame.f_code.co_filename}}:{{frame.f_lineno}}\")\n"
+                 f"    return trace_calls\n"
+                 f"\n"
+                 f"sys.settrace(trace_calls)\n"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Дополнительно: добавить ruff rule T201 (flake8-print) в ruff.toml
+# Это запретит НОВЫЕ print() в src/ — существующие можно игнорировать
+# через per-file-ignores.
+# ═════════════════════════════════════════════════════════════════════
+
+--- /dev/null   # новый файл ruff.toml
++++ ruff.toml
+@@ -0,0 +1,42 @@
++# Ruff configuration for llm-agent
++# Документация: https://docs.astral.sh/ruff/configuration/
++
++target-version = "py311"
++line-length = 100
++
++[lint]
++# Включаем правила:
++#   E, W  — pycodestyle (PEP 8)
++#   F     — pyflakes (unused imports, undefined names)
++#   I     — isort (import ordering)
++#   B     — flake8-bugbear (likely-bugs)
++#   C4    — flake8-comprehensions (unnecessary comprehensions)
++#   UP    — pyupgrade (modernise syntax)
++#   SIM   — flake8-simplify (simplifiable patterns)
++#   T20   — flake8-print (print() statements)  ← recommendation 12 guard
++select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM", "T20"]
++
++# Exclude для путей, где print() легитимен
++[lint.per-file-ignores]
++# CLI-мастера — print() OK
++"install.py" = ["T20"]
++"setup.py" = ["T20"]
++"first_run.py" = ["T20"]
++"run.py" = ["T20"]
++"build_exe.bat" = ["T20"]
++
++# CLI-модули — print() OK
++"src/cli.py" = ["T20"]
++"src/journal/cli.py" = ["T20"]
++"src/db/init_db.py" = ["T20"]
++"src/route_analytics.py" = ["T20"]  # has CLI mode with markdown output
++"src/db/autodetect.py" = ["T20"]    # interactive PG setup prompts
++
++# Тесты — print() OK (для дебага)
++"tests/*" = ["T20"]
++"scripts/test_*.py" = ["T20"]
++"scripts/*_probe*.py" = ["T20"]
++"harness/tests/*" = ["T20"]
++
++# debug MCP — T201 на литералы внутри f-string срабатывает ложно
++# (print() — это часть генерируемой строки для cProfile)
++"src/mcp_servers/debug/server.py" = ["T201"]

@@ -1,0 +1,25 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model SnifferAlert {
+  id        String   @id @default(cuid())
+  rule      String
+  severity  String // info | warn | crit
+  message   String
+  protocol  String?
+  client    String?
+  packetId  Int?
+  createdAt DateTime @default(now())
+}
