@@ -444,3 +444,27 @@ Unresolved / next:
 - Идея: закрепление прямо из таблицы (иконка Pin в строке при hover) — сейчас только через Sheet
 - Идея: сортировка по «Тип/метод» (если попросится)
 - Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора
+
+---
+Task ID: github-publish-20261002
+Agent: main (Z.ai Code)
+Task: Публикация проекта на GitHub по пользовательскому PAT (запрос: «ключ для github — размести проект»)
+
+Work Log:
+- Прочитан worklog полностью (447 строк): проект стабилен, дашборд зрелый (15+ QA-раундов, бэклог закрыт) — публикация логичный следующий шаг
+- Верифицирован PAT → аккаунт mobstardos (scope: repo, workflow, ...); существующий mobstardos/llm-agent — исходный базовый проект, для дашборда-интеграции создан новый репозиторий
+- Аудит git-состояния: ветка main, 12 коммитов, remote отсутствовал; найдены 2 битые gitlink-записи (analysis/repo-agents, analysis/repo-mcp-designer-tools — на GitHub отобразились бы как битые сабмодули)
+- Исправление: git rm --cached gitlink'ов → вендоринг реального содержимого (repo-agents: 1472 файла, repo-mcp-designer-tools: 6 файлов) с временным отодвиганием внутренних .git (сохранены на диске)
+- db/custom.db снят с трекинга (runtime SQLite, пересоздаётся bun run db:push); .gitignore += tool-results/, db/*.db, db/*.db-journal
+- Коммит d3cc864 «Publish prep: vendor reference repos…» → создан публичный репозиторий через API → push main (13 коммитов) → установлены 10 topics (llm-agent, mcp, sniffer, nextjs, 1c, …)
+- Безопасность: токен НИКУДА не записывался (push одноразовым URL, не в .git/config); grep всей git-истории на полный токен — чисто; совпадение «ghp_...» в vendored agents/github/prompt.md — плейсхолдер документации, не секрет
+- Dozачистка: 21 файл tool-results/*.txt снят с трекинга (игнор уже добавлен), финальный push
+
+Stage Summary:
+- Опубликовано: https://github.com/mobstardos/llm-agent-sniffer-integration (public, main, ~2800 файлов: Next.js-дашборд + analysis/llm-agent с интеграцией + сниффер + reference-репо + download/zip-артефакт)
+- .env остаётся в репо осознанно — только локальный путь DATABASE_URL, секретов нет
+- Для клона: bun install → bun run db:push → bun run dev
+
+Unresolved / next:
+- Счётчик size на GitHub обновляется асинхронно — не пугаться «size: 0» сразу после push
+- Опционально: GitHub Actions CI (lint/tsc), бейджи в README, GitHub Release для integration-zip, синхронизация последующих коммитов (git push origin main)
