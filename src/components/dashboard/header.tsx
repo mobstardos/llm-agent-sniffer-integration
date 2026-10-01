@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Radar, RotateCcw, Loader2 } from "lucide-react";
+import { Radar, RotateCcw, Loader2, Keyboard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 
@@ -83,6 +88,42 @@ export function DashboardHeader({ connected, connecting, retrySec }: HeaderProps
           </Badge>
 
           <Separator orientation="vertical" className="hidden h-6 bg-slate-800 sm:block" />
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Горячие клавиши"
+                className="min-h-[44px] border-slate-700 bg-slate-900 px-2.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-300 sm:min-h-[36px]"
+              >
+                <Keyboard className="size-4" aria-hidden />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-72 border-slate-700 bg-slate-950 p-3 text-slate-200"
+            >
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Горячие клавиши
+              </p>
+              <ul className="space-y-1.5 text-xs">
+                {[
+                  ["1–4", "переключение вкладок"],
+                  ["P", "пауза таблицы (вкладка «Сниффер»)"],
+                  ["/", "фокус на поиск пакетов"],
+                  ["Esc", "закрыть панель пакета"],
+                ].map(([k, v]) => (
+                  <li key={k} className="flex items-center justify-between gap-3">
+                    <kbd className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                      {k}
+                    </kbd>
+                    <span className="text-right text-slate-400">{v}</span>
+                  </li>
+                ))}
+              </ul>
+            </PopoverContent>
+          </Popover>
 
           <Tooltip>
             <TooltipTrigger asChild>

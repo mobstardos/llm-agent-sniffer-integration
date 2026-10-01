@@ -13,6 +13,11 @@ export function fmtCompact(n: number): string {
   return `${(n / 1_000_000).toFixed(2)} млн`;
 }
 
+/** Скорость в байтах/с → «25.9 тыс. Б/с» */
+export function fmtRate(bytesPerSec: number): string {
+  return `${fmtCompact(Math.round(bytesPerSec))} Б/с`;
+}
+
 /** HH:MM:SS.mmm из ISO-строки */
 export function fmtTime(iso: string): string {
   const d = new Date(iso);

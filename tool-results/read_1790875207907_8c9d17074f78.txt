@@ -1,0 +1,935 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  Bell,
+     6→  BellOff,
+     7→  Activity,
+     8→  HardDrive,
+     9→  Network,
+    10→  Siren,
+    11→  Pause,
+    12→  Play,
+    13→  CheckCircle2,
+    14→  XCircle,
+    15→  Loader2,
+    16→  Zap,
+    17→  Square,
+    18→  Download,
+    19→  Inbox,
+    20→  FileJson,
+    21→  FileSpreadsheet,
+    22→} from "lucide-react";
+    23→import { Badge } from "@/components/ui/badge";
+    24→import { Button } from "@/components/ui/button";
+    25→import {
+    26→  DropdownMenu,
+    27→  DropdownMenuContent,
+    28→  DropdownMenuItem,
+    29→  DropdownMenuLabel,
+    30→  DropdownMenuTrigger,
+    31→} from "@/components/ui/dropdown-menu";
+    32→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    33→import { Input } from "@/components/ui/input";
+    34→import { Label } from "@/components/ui/label";
+    35→import {
+    36→  Select,
+    37→  SelectContent,
+    38→  SelectItem,
+    39→  SelectTrigger,
+    40→  SelectValue,
+    41→} from "@/components/ui/select";
+    42→import { Switch } from "@/components/ui/switch";
+    43→import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+    44→import { Skeleton } from "@/components/ui/skeleton";
+    45→import {
+    46→  Table,
+    47→  TableBody,
+    48→  TableCell,
+    49→  TableHead,
+    50→  TableHeader,
+    51→  TableRow,
+    52→} from "@/components/ui/table";
+    53→import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+    54→import { toast } from "sonner";
+    55→import {
+    56→  useSnifferStream,
+    57→  type Packet,
+    58→  type Alert,
+    59→} from "@/hooks/use-sniffer-stream";
+    60→import { PpsChart } from "@/components/dashboard/pps-chart";
+    61→import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
+    62→import { fmtBytes, fmtClock, fmtTime, fmtCompact, protocolColor } from "@/lib/format";
+    63→
+    64→const MAX_TABLE_ROWS = 200;
+    65→
+    66→const SCENARIO_CATALOG = [
+    67→  { id: "azs_burst", label: "АЗС-всплеск", hint: "x4 пак/с, RemoteServer" },
+    68→  { id: "thrift_storm", label: "Thrift-шторм", hint: "поток EXCEPTION" },
+    69→  { id: "giant_attack", label: "Гигантские пакеты", hint: "> 1 МБ каждый" },
+    70→  { id: "rollback_loop", label: "Откаты оплаты", hint: "CASHLESS_ROLLBACK" },
+    71→] as const;
+    72→
+    73→type ScenarioId = (typeof SCENARIO_CATALOG)[number]["id"];
+    74→
+    75→interface SnifferTabProps {
+    76→  live: ReturnType<typeof useSnifferStream>;
+    77→}
+    78→
+    79→function StatCard({
+    80→  label,
+    81→  value,
+    82→  sub,
+    83→  icon: Icon,
+    84→  alert,
+    85→}: {
+    86→  label: string;
+    87→  value: string;
+    88→  sub?: string;
+    89→  icon: React.ComponentType<{ className?: string }>;
+    90→  alert?: boolean;
+    91→}) {
+    92→  return (
+    93→    <Card className={`border-slate-800 bg-slate-900/60 ${alert ? "border-red-500/40" : ""}`}>
+    94→      <CardContent className="flex items-center gap-3 p-4">
+    95→        <span
+    96→          className={`flex size-11 shrink-0 items-center justify-center rounded-lg border ${
+    97→            alert ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"
+    98→          }`}
+    99→        >
+   100→          <Icon className={`size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
+   101→        </span>
+   102→        <div className="min-w-0">
+   103→          <div className="truncate text-lg font-bold leading-tight text-slate-50">{value}</div>
+   104→          <div className="truncate text-xs text-slate-400">{label}</div>
+   105→          {sub && <div className="truncate text-[10px] text-slate-500">{sub}</div>}
+   106→        </div>
+   107→      </CardContent>
+   108→    </Card>
+   109→  );
+   110→}
+   111→
+   112→function DirBadge({ dir }: { dir: "TX" | "RX" }) {
+   113→  return (
+   114→    <Badge
+   115→      variant="outline"
+   116→      className={`px-1.5 py-0 font-mono text-[10px] font-semibold ${
+   117→        dir === "TX"
+   118→          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+   119→          : "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+   120→      }`}
+   121→    >
+   122→      {dir === "TX" ? "↑ TX" : "↓ RX"}
+   123→    </Badge>
+   124→  );
+   125→}
+   126→
+   127→function SeverityBadge({ severity }: { severity: string }) {
+   128→  const map: Record<string, string> = {
+   129→    crit: "border-red-500/50 bg-red-500/10 text-red-400",
+   130→    warn: "border-amber-500/50 bg-amber-500/10 text-amber-400",
+   131→    info: "border-slate-500/50 bg-slate-500/10 text-slate-300",
+   132→  };
+   133→  const label: Record<string, string> = { crit: "CRIT", warn: "WARN", info: "INFO" };
+   134→  return (
+   135→    <Badge variant="outline" className={`px-1.5 py-0 text-[10px] font-semibold ${map[severity] ?? map.info}`}>
+   136→      {label[severity] ?? severity.toUpperCase()}
+   137→    </Badge>
+   138→  );
+   139→}
+   140→
+   141→function StateBadge({ state }: { state: string }) {
+   142→  const map: Record<string, string> = {
+   143→    active: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400",
+   144→    closing: "border-amber-500/50 bg-amber-500/10 text-amber-400",
+   145→    closed: "border-slate-600/50 bg-slate-600/10 text-slate-400",
+   146→  };
+   147→  const label: Record<string, string> = { active: "активна", closing: "закрывается", closed: "закрыта" };
+   148→  return (
+   149→    <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${map[state] ?? map.closed}`}>
+   150→      {label[state] ?? state}
+   151→    </Badge>
+   152→  );
+   153→}
+   154→
+   155→function PacketDetailSheet({
+   156→  packet,
+   157→  open,
+   158→  onOpenChange,
+   159→  detail,
+   160→  loading,
+   161→}: {
+   162→  packet: Packet | null;
+   163→  open: boolean;
+   164→  onOpenChange: (v: boolean) => void;
+   165→  detail: { hexdump: string } | null;
+   166→  loading: boolean;
+   167→}) {
+   168→  const rows: [string, string][] = packet
+   169→    ? [
+   170→        ["ID", `#${packet.id}`],
+   171→        ["Время", fmtTime(packet.ts)],
+   172→        ["Направление", packet.direction],
+   173→        ["Клиент", packet.client],
+   174→        ["Канал", packet.portName],
+   175→        ["Протокол", packet.protocol],
+   176→        ["msg_type", packet.msgType ?? "—"],
+   177→        ["method_type", packet.methodType ?? "—"],
+   178→        ["method", packet.method ?? "—"],
+   179→        ["cmd_type", packet.cmdType ?? "—"],
+   180→        ["cmd_class / cmd", packet.cmdClass != null ? `${packet.cmdClass} / ${packet.cmd ?? "—"}` : "—"],
+   181→        ["Размер", fmtBytes(packet.size)],
+   182→        ["Валидность", packet.valid ? "✓ корректный" : "✗ повреждён/некорректен"],
+   183→      ]
+   184→    : [];
+   185→
+   186→  return (
+   187→    <Sheet open={open} onOpenChange={onOpenChange}>
+   188→      <SheetContent
+   189→        side="right"
+   190→        className="w-full max-w-md overflow-y-auto border-slate-800 bg-slate-950 p-4 sm:max-w-lg custom-scroll"
+   191→      >
+   192→        <SheetHeader className="p-0 pb-2 text-left">
+   193→          <SheetTitle className="text-base text-slate-100">
+   194→            Пакет {packet ? `#${packet.id}` : ""}
+   195→          </SheetTitle>
+   196→          <SheetDescription className="text-xs text-slate-400">
+   197→            {packet ? packet.summary : ""}
+   198→          </SheetDescription>
+   199→        </SheetHeader>
+   200→        {packet && (
+   201→          <div className="mt-2 space-y-3">
+   202→            <div className="rounded-lg border border-slate-800">
+   203→              <Table>
+   204→                <TableBody>
+   205→                  {rows.map(([k, v]) => (
+   206→                    <TableRow key={k} className="border-slate-800/70">
+   207→                      <TableCell className="py-1.5 pl-3 pr-2 font-mono text-[11px] text-slate-500">
+   208→                        {k}
+   209→                      </TableCell>
+   210→                      <TableCell className="py-1.5 pr-3 font-mono text-xs text-slate-200">
+   211→                        {v}
+   212→                      </TableCell>
+   213→                    </TableRow>
+   214→                  ))}
+   215→                </TableBody>
+   216→              </Table>
+   217→            </div>
+   218→            <div>
+   219→              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+   220→                Hexdump {loading ? "" : detail ? "(до 2 КБ)" : ""}
+   221→              </p>
+   222→              {loading ? (
+   223→                <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
+   224→                  <Loader2 className="size-4 animate-spin" aria-hidden /> Загрузка дампа…
+   225→                </div>
+   226→              ) : (
+   227→                <pre className="max-h-72 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[10px] leading-relaxed text-emerald-300 custom-scroll">
+   228→                  {detail?.hexdump ?? packet.hexPreview}
+   229→                </pre>
+   230→              )}
+   231→            </div>
+   232→          </div>
+   233→        )}
+   234→      </SheetContent>
+   235→    </Sheet>
+   236→  );
+   237→}
+   238→
+   239→export function SnifferTab({ live }: SnifferTabProps) {
+   240→  const { connected, packets, sessions, alerts, stats, series, scenario } = live;
+   241→
+   242→  // Фильтры
+   243→  const [search, setSearch] = useState("");
+   244→  const [protocol, setProtocol] = useState("all");
+   245→  const [direction, setDirection] = useState("all");
+   246→  const [minSize, setMinSize] = useState("");
+   247→  const [maxSize, setMaxSize] = useState("");
+   248→  const [paused, setPaused] = useState(false);
+   249→  const [frozenPackets, setFrozenPackets] = useState<Packet[] | null>(null);
+   250→  const [muted, setMuted] = useState(false);
+   251→  const [selected, setSelected] = useState<Packet | null>(null);
+   252→  const [sheetOpen, setSheetOpen] = useState(false);
+   253→  const [detail, setDetail] = useState<{ hexdump: string } | null>(null);
+   254→  const [detailLoading, setDetailLoading] = useState(false);
+   255→  const [scenarioBusy, setScenarioBusy] = useState<ScenarioId | "stop" | null>(null);
+   256→  const [nowTick, setNowTick] = useState(() => Date.now());
+   257→  const alertToastSeenRef = useRef<string | null>(null);
+   258→
+   259→  // Тосты по живым алертам (если не в mute) — реагируем только на новые id
+   260→  useEffect(() => {
+   261→    if (muted || alerts.length === 0) return;
+   262→    const latest = alerts[0];
+   263→    if (alertToastSeenRef.current === latest.id) return;
+   264→    const t = new Date(latest.createdAt).getTime();
+   265→    if (Date.now() - t < 2500) {
+   266→      alertToastSeenRef.current = latest.id;
+   267→      if (latest.severity === "crit") {
+   268→        toast.error(latest.rule, { description: latest.message, duration: 3500 });
+   269→      } else {
+   270→        toast.warning(latest.rule, { description: latest.message, duration: 3000 });
+   271→      }
+   272→    }
+   273→  }, [alerts, muted]);
+   274→
+   275→  // Тикаем часы для обратного отсчёта сценария
+   276→  useEffect(() => {
+   277→    if (!scenario) return;
+   278→    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+   279→    return () => clearInterval(timer);
+   280→  }, [scenario]);
+   281→
+   282→  const scenarioRemaining = useMemo(() => {
+   283→    if (!scenario) return 0;
+   284→    return Math.max(0, Math.ceil((new Date(scenario.endsAt).getTime() - nowTick) / 1000));
+   285→  }, [scenario, nowTick]);
+   286→
+   287→  const handleScenario = async (id: ScenarioId | "stop") => {
+   288→    setScenarioBusy(id);
+   289→    try {
+   290→      const res =
+   291→        id === "stop"
+   292→          ? await fetch("/api/sniffer/scenario", { method: "DELETE" })
+   293→          : await fetch("/api/sniffer/scenario", {
+   294→              method: "POST",
+   295→              headers: { "Content-Type": "application/json" },
+   296→              body: JSON.stringify({ id }),
+   297→            });
+   298→      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+   299→      if (id === "stop") {
+   300→        toast("Сценарий остановлен", { duration: 2000 });
+   301→      } else {
+   302→        const def = SCENARIO_CATALOG.find((s) => s.id === id);
+   303→        toast.success(`Сценарий «${def?.label}» запущен`, {
+   304→          description: "Генератор трафика изменил профиль — следите за графиком и тревогами.",
+   305→          duration: 3000,
+   306→        });
+   307→      }
+   308→    } catch (e) {
+   309→      toast.error("Не удалось изменить сценарий", {
+   310→        description: e instanceof Error ? e.message : String(e),
+   311→        duration: 3000,
+   312→      });
+   313→    } finally {
+   314→      setScenarioBusy(null);
+   315→    }
+   316→  };
+   317→
+   318→  const handlePause = () => {
+   319→    if (!paused) {
+   320→      setFrozenPackets(packets);
+   321→      setPaused(true);
+   322→      toast.info("Таблица остановлена", {
+   323→        description: "Приём пакетов продолжается в фоне (буфер 3000).",
+   324→        duration: 2500,
+   325→      });
+   326→    } else {
+   327→      setFrozenPackets(null);
+   328→      setPaused(false);
+   329→    }
+   330→  };
+   331→
+   332→  const filtered = useMemo(() => {
+   333→    const source = paused && frozenPackets ? frozenPackets : packets;
+   334→    const s = search.trim().toLowerCase();
+   335→    const min = parseInt(minSize, 10);
+   336→    const max = parseInt(maxSize, 10);
+   337→    return source.filter((p) => {
+   338→      if (protocol !== "all" && p.protocol !== protocol) return false;
+   339→      if (direction !== "all" && p.direction !== direction) return false;
+   340→      if (!Number.isNaN(min) && p.size < min) return false;
+   341→      if (!Number.isNaN(max) && p.size > max) return false;
+   342→      if (s) {
+   343→        const hay = `${p.summary} ${p.method ?? ""} ${p.methodType ?? ""} ${p.cmdType ?? ""} ${p.client}`.toLowerCase();
+   344→        if (!hay.includes(s)) return false;
+   345→      }
+   346→      return true;
+   347→    });
+   348→  }, [packets, frozenPackets, paused, search, protocol, direction, minSize, maxSize]);
+   349→
+   350→  const display = filtered.slice(0, MAX_TABLE_ROWS);
+   351→  const latestAlerts = alerts.slice(0, 50);
+   352→  const sessionList = sessions.slice(0, 12);
+   353→
+   354→  const onRowClick = (p: Packet) => {
+   355→    setSelected(p);
+   356→    setSheetOpen(true);
+   357→    setDetail(null);
+   358→    setDetailLoading(true);
+   359→    fetch(`/api/sniffer/packet/${p.id}`)
+   360→      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("404"))))
+   361→      .then((d: { hexdump: string }) => setDetail(d))
+   362→      .catch(() => setDetail({ hexdump: p.hexPreview }))
+   363→      .finally(() => setDetailLoading(false));
+   364→  };
+   365→
+   366→  return (
+   367→    <div className="space-y-4">
+   368→      {/* Статбар */}
+   369→      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+   370→        <StatCard
+   371→          icon={Activity}
+   372→          label="Пакеты всего"
+   373→          value={stats ? fmtCompact(stats.totalPackets) : "—"}
+   374→          sub={stats ? `${stats.lastPps} п/с · ${stats.invalidPackets} невалидных` : undefined}
+   375→        />
+   376→        <StatCard
+   377→          icon={HardDrive}
+   378→          label="Байт перехвачено"
+   379→          value={stats ? fmtBytes(stats.totalBytes) : "—"}
+   380→          sub={stats ? `${fmtCompact(stats.lastBps)} Б/с` : undefined}
+   381→        />
+   382→        <StatCard
+   383→          icon={Network}
+   384→          label="Активные сессии"
+   385→          value={stats ? String(stats.activeSessions) : "—"}
+   386→          sub={stats ? `всего за сессию: ${stats.totalSessions}` : undefined}
+   387→        />
+   388→        <StatCard
+   389→          icon={Siren}
+   390→          label="Тревоги"
+   391→          value={stats ? String(stats.alertsCount) : "—"}
+   392→          sub="правила config.json"
+   393→          alert={(stats?.alertsCount ?? 0) > 0}
+   394→        />
+   395→      </div>
+   396→
+   397→      {/* Сценарии трафика (демо-режимы генератора) */}
+   398→      <Card
+   399→        className={`border-slate-800 bg-slate-900/60 ${
+   400→          scenario ? "border-amber-500/50 shadow-[0_0_18px_-6px] shadow-amber-500/30" : ""
+   401→        }`}
+   402→      >
+   403→        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
+   404→          <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+   405→            <Zap className={`size-4 ${scenario ? "text-amber-400" : "text-emerald-400"}`} aria-hidden />
+   406→            Сценарии трафика
+   407→            {scenario && (
+   408→              <Badge
+   409→                variant="outline"
+   410→                className="border-amber-500/50 bg-amber-500/10 font-mono text-[10px] text-amber-300"
+   411→              >
+   412→                {scenario.label} · осталось {scenarioRemaining}с
+   413→              </Badge>
+   414→            )}
+   415→          </CardTitle>
+   416→          <span className="text-[11px] text-slate-500">
+   417→            демо-режимы генератора — как если бы АЗС начали массовый опрос
+   418→          </span>
+   419→        </CardHeader>
+   420→        <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
+   421→          {SCENARIO_CATALOG.map((s) => {
+   422→            const isActive = scenario?.id === s.id;
+   423→            const busy = scenarioBusy === s.id;
+   424→            return (
+   425→              <Button
+   426→                key={s.id}
+   427→                size="sm"
+   428→                variant="outline"
+   429→                disabled={scenarioBusy !== null}
+   430→                onClick={() => handleScenario(s.id)}
+   431→                aria-pressed={isActive}
+   432→                className={`min-h-[44px] flex-col items-start gap-0 border-slate-700 sm:min-h-[40px] ${
+   433→                  isActive
+   434→                    ? "border-amber-500/60 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+   435→                    : "bg-slate-950 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+   436→                }`}
+   437→              >
+   438→                <span className="flex items-center gap-1.5 text-xs font-medium">
+   439→                  {busy && <Loader2 className="size-3 animate-spin" aria-hidden />}
+   440→                  {s.label}
+   441→                </span>
+   442→                <span className="font-mono text-[10px] text-slate-500">{s.hint}</span>
+   443→              </Button>
+   444→            );
+   445→          })}
+   446→          {scenario && (
+   447→            <Button
+   448→              size="sm"
+   449→              variant="outline"
+   450→              disabled={scenarioBusy !== null}
+   451→              onClick={() => handleScenario("stop")}
+   452→              className="ml-auto min-h-[44px] border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 sm:min-h-[40px]"
+   453→            >
+   454→              {scenarioBusy === "stop" ? (
+   455→                <Loader2 className="size-4 animate-spin" aria-hidden />
+   456→              ) : (
+   457→                <Square className="size-3.5" aria-hidden />
+   458→              )}
+   459→              Остановить
+   460→            </Button>
+   461→          )}
+   462→        </CardContent>
+   463→      </Card>
+   464→
+   465→      {/* График */}
+   466→      <Card className="border-slate-800 bg-slate-900/60">
+   467→        <CardHeader className="p-4 pb-2">
+   468→          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-200">
+   469→            <span>Пакетов в секунду (pps)</span>
+   470→            {stats && (
+   471→              <Badge variant="outline" className="border-slate-700 font-mono text-[10px] text-slate-400">
+   472→                uptime {Math.floor(stats.uptimeSec / 60)}м {stats.uptimeSec % 60}с
+   473→              </Badge>
+   474→            )}
+   475→          </CardTitle>
+   476→        </CardHeader>
+   477→        <CardContent className="px-4 pb-4 pt-0">
+   478→          <PpsChart series={series} />
+   479→        </CardContent>
+   480→      </Card>
+   481→
+   482→      {/* Распределение протоколов + топы */}
+   483→      {stats && (
+   484→        <Card className="border-slate-800 bg-slate-900/60">
+   485→          <CardHeader className="p-4 pb-3">
+   486→            <CardTitle className="text-sm text-slate-200">Аналитика трафика</CardTitle>
+   487→          </CardHeader>
+   488→          <CardContent className="p-4 pt-0">
+   489→            <ProtocolBreakdown
+   490→              perProtocol={stats.perProtocol}
+   491→              totalPackets={stats.totalPackets}
+   492→              topMethods={stats.topMethods}
+   493→              topClients={stats.topClients}
+   494→            />
+   495→          </CardContent>
+   496→        </Card>
+   497→      )}
+   498→
+   499→      {/* Фильтры */}
+   500→      <Card className="border-slate-800 bg-slate-900/60">
+   501→        <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_auto_auto_auto_auto] lg:grid-cols-[1.4fr_auto_auto_auto_auto_auto]">
+   502→          <div className="space-y-1">
+   503→            <Label htmlFor="pkt-search" className="text-[11px] text-slate-400">
+   504→              Поиск (метод, резюме, клиент)
+   505→            </Label>
+   506→            <Input
+   507→              id="pkt-search"
+   508→              placeholder="напр. sendTanksState или 10.8.0.51"
+   509→              value={search}
+   510→              onChange={(e) => setSearch(e.target.value)}
+   511→              className="h-10 border-slate-700 bg-slate-950 text-sm text-slate-200 placeholder:text-slate-600"
+   512→            />
+   513→          </div>
+   514→          <div className="space-y-1">
+   515→            <Label className="text-[11px] text-slate-400">Протокол</Label>
+   516→            <Select value={protocol} onValueChange={setProtocol}>
+   517→              <SelectTrigger className="h-10 w-full min-w-[150px] border-slate-700 bg-slate-950 text-sm text-slate-200 md:w-[160px]">
+   518→                <SelectValue placeholder="Все" />
+   519→              </SelectTrigger>
+   520→              <SelectContent className="border-slate-700 bg-slate-950 text-slate-200">
+   521→                <SelectItem value="all">Все</SelectItem>
+   522→                <SelectItem value="REMOTE_SERVER">REMOTE_SERVER</SelectItem>
+   523→                <SelectItem value="THRIFT">THRIFT</SelectItem>
+   524→                <SelectItem value="HTTP">HTTP</SelectItem>
+   525→                <SelectItem value="JSON">JSON</SelectItem>
+   526→                <SelectItem value="MODBUS">MODBUS</SelectItem>
+   527→                <SelectItem value="RAW">RAW</SelectItem>
+   528→              </SelectContent>
+   529→            </Select>
+   530→          </div>
+   531→          <div className="space-y-1">
+   532→            <Label className="text-[11px] text-slate-400">Направление</Label>
+   533→            <ToggleGroup
+   534→              type="single"
+   535→              variant="outline"
+   536→              value={direction}
+   537→              onValueChange={(v) => v && setDirection(v)}
+   538→              className="border-slate-700"
+   539→            >
+   540→              <ToggleGroupItem
+   541→                value="all"
+   542→                aria-label="Все направления"
+   543→                className="h-10 border-slate-700 px-3 text-xs text-slate-300 data-[state=on]:bg-slate-800 data-[state=on]:text-emerald-300"
+   544→              >
+   545→                Все
+   546→              </ToggleGroupItem>
+   547→              <ToggleGroupItem
+   548→                value="TX"
+   549→                aria-label="Только TX"
+   550→                className="h-10 border-slate-700 px-3 font-mono text-xs text-emerald-400 data-[state=on]:bg-emerald-500/15 data-[state=on]:text-emerald-300"
+   551→              >
+   552→                TX
+   553→              </ToggleGroupItem>
+   554→              <ToggleGroupItem
+   555→                value="RX"
+   556→                aria-label="Только RX"
+   557→                className="h-10 border-slate-700 px-3 font-mono text-xs text-cyan-400 data-[state=on]:bg-cyan-500/15 data-[state=on]:text-cyan-300"
+   558→              >
+   559→                RX
+   560→              </ToggleGroupItem>
+   561→            </ToggleGroup>
+   562→          </div>
+   563→          <div className="flex gap-2">
+   564→            <div className="w-[92px] space-y-1">
+   565→              <Label htmlFor="min-size" className="text-[11px] text-slate-400">
+   566→                ≥ Байт
+   567→              </Label>
+   568→              <Input
+   569→                id="min-size"
+   570→                inputMode="numeric"
+   571→                placeholder="0"
+   572→                value={minSize}
+   573→                onChange={(e) => setMinSize(e.target.value.replace(/\D/g, ""))}
+   574→                className="h-10 border-slate-700 bg-slate-950 text-sm text-slate-200 placeholder:text-slate-600"
+   575→              />
+   576→            </div>
+   577→            <div className="w-[92px] space-y-1">
+   578→              <Label htmlFor="max-size" className="text-[11px] text-slate-400">
+   579→                ≤ Байт
+   580→              </Label>
+   581→              <Input
+   582→                id="max-size"
+   583→                inputMode="numeric"
+   584→                placeholder="∞"
+   585→                value={maxSize}
+   586→                onChange={(e) => setMaxSize(e.target.value.replace(/\D/g, ""))}
+   587→                className="h-10 border-slate-700 bg-slate-950 text-sm text-slate-200 placeholder:text-slate-600"
+   588→              />
+   589→            </div>
+   590→          </div>
+   591→          <div className="flex items-end gap-2">
+   592→            <Button
+   593→              onClick={handlePause}
+   594→              variant="outline"
+   595→              className={`min-h-[44px] border-slate-700 sm:min-h-[40px] ${
+   596→                paused
+   597→                  ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+   598→                  : "bg-slate-950 text-slate-200 hover:bg-slate-800"
+   599→              }`}
+   600→              aria-pressed={paused}
+   601→            >
+   602→              {paused ? (
+   603→                <>
+   604→                  <Play className="size-4" aria-hidden /> Продолжить
+   605→                </>
+   606→              ) : (
+   607→                <>
+   608→                  <Pause className="size-4" aria-hidden /> Пауза
+   609→                </>
+   610→              )}
+   611→            </Button>
+   612→          </div>
+   613→          <div className="flex items-end">
+   614→            <span className="whitespace-nowrap rounded-md border border-slate-800 bg-slate-950 px-2.5 py-2 font-mono text-[11px] text-slate-400">
+   615→              отфильтровано: <span className="text-emerald-300">{fmtCompact(filtered.length)}</span> из{" "}
+   616→              {fmtCompact(packets.length)}
+   617→            </span>
+   618→          </div>
+   619→        </CardContent>
+   620→      </Card>
+   621→
+   622→      {/* Таблица пакетов */}
+   623→      <Card className="border-slate-800 bg-slate-900/60">
+   624→        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
+   625→          <CardTitle className="flex flex-wrap items-center gap-2 text-sm text-slate-200">
+   626→            <span className="flex items-center gap-2">
+   627→              Поток пакетов
+   628→              {paused && (
+   629→                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
+   630→                  пауза — показан снимок
+   631→                </Badge>
+   632→              )}
+   633→              {!connected && (
+   634→                <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-[10px] text-red-400">
+   635→                  офлайн
+   636→                </Badge>
+   637→              )}
+   638→            </span>
+   639→            {filtered.length > MAX_TABLE_ROWS && (
+   640→              <span className="text-[11px] font-normal text-slate-500">
+   641→                показаны последние {MAX_TABLE_ROWS} из {fmtCompact(filtered.length)}
+   642→              </span>
+   643→            )}
+   644→          </CardTitle>
+   645→          <DropdownMenu>
+   646→            <DropdownMenuTrigger asChild>
+   647→              <Button
+   648→                size="sm"
+   649→                variant="outline"
+   650→                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+   651→              >
+   652→                <Download className="size-3.5" aria-hidden />
+   653→                Экспорт
+   654→              </Button>
+   655→            </DropdownMenuTrigger>
+   656→            <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
+   657→              <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500">
+   658→                как в реальном сниффере
+   659→              </DropdownMenuLabel>
+   660→              <DropdownMenuItem asChild>
+   661→                <a href="/api/sniffer/export?format=jsonl" download className="cursor-pointer">
+   662→                  <FileJson className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   663→                  traffic.jsonl — пакеты
+   664→                </a>
+   665→              </DropdownMenuItem>
+   666→              <DropdownMenuItem asChild>
+   667→                <a href="/api/sniffer/export?format=csv" download className="cursor-pointer">
+   668→                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   669→                  отчёт CSV — сводка + пакеты
+   670→                </a>
+   671→              </DropdownMenuItem>
+   672→              <DropdownMenuItem asChild>
+   673→                <a href="/api/sniffer/export?format=sessions" download className="cursor-pointer">
+   674→                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   675→                  sessions.csv — сессии
+   676→                </a>
+   677→              </DropdownMenuItem>
+   678→              <DropdownMenuItem asChild>
+   679→                <a href="/api/sniffer/export?format=alerts" download className="cursor-pointer">
+   680→                  <FileJson className="mr-2 size-3.5 text-amber-400" aria-hidden />
+   681→                  alerts.jsonl — журнал тревог
+   682→                </a>
+   683→              </DropdownMenuItem>
+   684→            </DropdownMenuContent>
+   685→          </DropdownMenu>
+   686→        </CardHeader>
+   687→        <CardContent className="p-0 pb-2">
+   688→          <div className="max-h-[60vh] overflow-y-auto custom-scroll">
+   689→            <Table>
+   690→              <TableHeader className="sticky top-0 z-10 bg-slate-900 shadow-[0_1px_0_0_theme(colors.slate.800)]">
+   691→                <TableRow className="border-slate-800 hover:bg-transparent">
+   692→                  <TableHead className="pl-4 font-mono text-[11px] text-slate-500">Время</TableHead>
+   693→                  <TableHead className="text-[11px] text-slate-500">↕</TableHead>
+   694→                  <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
+   695→                  <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
+   696→                  <TableHead className="text-[11px] text-slate-500">Тип / метод</TableHead>
+   697→                  <TableHead className="text-right text-[11px] text-slate-500">Размер</TableHead>
+   698→                  <TableHead className="text-[11px] text-slate-500">Валид</TableHead>
+   699→                  <TableHead className="pr-4 text-[11px] text-slate-500">Резюме</TableHead>
+   700→                </TableRow>
+   701→              </TableHeader>
+   702→              <TableBody>
+   703→                {display.length === 0 ? (
+   704→                  <TableRow>
+   705→                    <TableCell colSpan={8} className="py-12 text-center">
+   706→                      <div className="flex flex-col items-center gap-2">
+   707→                        <Inbox className="size-8 text-slate-600" aria-hidden />
+   708→                        <span className="text-sm text-slate-400">
+   709→                          {connected ? "Пакетов по фильтру не найдено" : "Нет соединения с потоком сниффера"}
+   710→                        </span>
+   711→                        <span className="text-[11px] text-slate-600">
+   712→                          {connected
+   713→                            ? "Ослабьте фильтры или дождитесь новых пакетов — поток живёт"
+   714→                            : "Переподключение к /api/sniffer/stream…"}
+   715→                        </span>
+   716→                      </div>
+   717→                    </TableCell>
+   718→                  </TableRow>
+   719→                ) : (
+   720→                  display.map((p, idx) => (
+   721→                    <TableRow
+   722→                      key={p.id}
+   723→                      onClick={() => onRowClick(p)}
+   724→                      className={`cursor-pointer border-slate-800/70 hover:bg-slate-800/60 ${
+   725→                        idx % 2 === 1 ? "bg-slate-950/40" : ""
+   726→                      }`}
+   727→                    >
+   728→                      <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400">
+   729→                        {fmtTime(p.ts)}
+   730→                      </TableCell>
+   731→                      <TableCell className="py-2">
+   732→                        <DirBadge dir={p.direction} />
+   733→                      </TableCell>
+   734→                      <TableCell className="max-w-[130px] truncate py-2 text-xs text-slate-300">
+   735→                        {p.portName}
+   736→                      </TableCell>
+   737→                      <TableCell className="py-2">
+   738→                        <Badge
+   739→                          variant="outline"
+   740→                          className={`px-1.5 py-0 font-mono text-[10px] ${protocolColor(p.protocol)}`}
+   741→                        >
+   742→                          {p.protocol}
+   743→                        </Badge>
+   744→                      </TableCell>
+   745→                      <TableCell className="max-w-[180px] truncate py-2 font-mono text-xs text-slate-200">
+   746→                        {p.methodType ?? p.method ?? p.msgType ?? "—"}
+   747→                      </TableCell>
+   748→                      <TableCell className="whitespace-nowrap py-2 text-right font-mono text-xs text-slate-300">
+   749→                        {fmtBytes(p.size)}
+   750→                      </TableCell>
+   751→                      <TableCell className="py-2">
+   752→                        {p.valid ? (
+   753→                          <CheckCircle2 className="size-4 text-emerald-500" aria-label="валидный" />
+   754→                        ) : (
+   755→                          <XCircle className="size-4 text-red-500" aria-label="невалидный" />
+   756→                        )}
+   757→                      </TableCell>
+   758→                      <TableCell className="max-w-[320px] truncate py-2 pr-4 text-xs text-slate-400">
+   759→                        {p.summary}
+   760→                      </TableCell>
+   761→                    </TableRow>
+   762→                  ))
+   763→                )}
+   764→              </TableBody>
+   765→            </Table>
+   766→          </div>
+   767→        </CardContent>
+   768→      </Card>
+   769→
+   770→      {/* Сессии + Тревоги */}
+   771→      <div className="grid gap-3 lg:grid-cols-2">
+   772→        <Card className="border-slate-800 bg-slate-900/60">
+   773→          <CardHeader className="p-4 pb-2">
+   774→            <CardTitle className="text-sm text-slate-200">Сессии</CardTitle>
+   775→          </CardHeader>
+   776→          <CardContent className="p-0 pb-2">
+   777→            <div className="max-h-64 overflow-y-auto custom-scroll">
+   778→              <Table>
+   779→                <TableHeader>
+   780→                  <TableRow className="border-slate-800 hover:bg-transparent">
+   781→                    <TableHead className="pl-4 text-[11px] text-slate-500">Клиент</TableHead>
+   782→                    <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
+   783→                    <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
+   784→                    <TableHead className="text-right text-[11px] text-slate-500">TX/RX пак.</TableHead>
+   785→                    <TableHead className="text-right text-[11px] text-slate-500">Байты</TableHead>
+   786→                    <TableHead className="text-[11px] text-slate-500">Время</TableHead>
+   787→                    <TableHead className="pr-4 text-[11px] text-slate-500">Состояние</TableHead>
+   788→                  </TableRow>
+   789→                </TableHeader>
+   790→                <TableBody>
+   791→                  {sessionList.length === 0 ? (
+   792→                    <TableRow>
+   793→                      <TableCell colSpan={7} className="py-6 text-center text-xs text-slate-500">
+   794→                        Нет сессий
+   795→                      </TableCell>
+   796→                    </TableRow>
+   797→                  ) : (
+   798→                    sessionList.map((s) => (
+   799→                      <TableRow key={s.id} className="border-slate-800/70">
+   800→                        <TableCell className="py-2 pl-4 font-mono text-xs text-slate-200">{s.client}</TableCell>
+   801→                        <TableCell className="max-w-[120px] truncate py-2 text-xs text-slate-300">
+   802→                          {s.portName}
+   803→                        </TableCell>
+   804→                        <TableCell className="py-2">
+   805→                          <Badge
+   806→                            variant="outline"
+   807→                            className={`px-1.5 py-0 font-mono text-[10px] ${protocolColor(s.protocol)}`}
+   808→                          >
+   809→                            {s.protocol}
+   810→                          </Badge>
+   811→                        </TableCell>
+   812→                        <TableCell className="whitespace-nowrap py-2 text-right font-mono text-[11px]">
+   813→                          <span className="text-emerald-400">{s.txPackets}</span>
+   814→                          <span className="text-slate-600"> / </span>
+   815→                          <span className="text-cyan-400">{s.rxPackets}</span>
+   816→                        </TableCell>
+   817→                        <TableCell className="whitespace-nowrap py-2 text-right font-mono text-[11px] text-slate-400">
+   818→                          {fmtBytes(s.txBytes + s.rxBytes)}
+   819→                        </TableCell>
+   820→                        <TableCell className="whitespace-nowrap py-2 font-mono text-[11px] text-slate-400">
+   821→                          {fmtClock(s.startedAt)}
+   822→                        </TableCell>
+   823→                        <TableCell className="py-2 pr-4">
+   824→                          <StateBadge state={s.state} />
+   825→                        </TableCell>
+   826→                      </TableRow>
+   827→                    ))
+   828→                  )}
+   829→                </TableBody>
+   830→              </Table>
+   831→            </div>
+   832→          </CardContent>
+   833→        </Card>
+   834→
+   835→        <Card className="border-slate-800 bg-slate-900/60">
+   836→          <CardHeader className="flex-row items-center justify-between p-4 pb-2">
+   837→            <CardTitle className="text-sm text-slate-200">Тревоги</CardTitle>
+   838→            <div className="flex items-center gap-2">
+   839→              {muted ? (
+   840→                <BellOff className="size-4 text-slate-500" aria-hidden />
+   841→              ) : (
+   842→                <Bell className="size-4 text-emerald-400" aria-hidden />
+   843→              )}
+   844→              <Switch
+   845→                checked={muted}
+   846→                onCheckedChange={(v) => {
+   847→                  setMuted(v);
+   848→                  toast(v ? "Уведомления тревог выключены" : "Уведомления тревог включены", {
+   849→                    description: v
+   850→                      ? "Алерты по-прежнему фиксируются в журнале и БД."
+   851→                      : "Критические тревоги будут всплывать как уведомления.",
+   852→                    duration: 2500,
+   853→                  });
+   854→                }}
+   855→                aria-label="Выключить уведомления тревог"
+   856→              />
+   857→            </div>
+   858→          </CardHeader>
+   859→          <CardContent className="p-0 pb-2">
+   860→            <div className="max-h-64 overflow-y-auto custom-scroll">
+   861→              <Table>
+   862→                <TableHeader>
+   863→                  <TableRow className="border-slate-800 hover:bg-transparent">
+   864→                    <TableHead className="pl-4 text-[11px] text-slate-500">Ур.</TableHead>
+   865→                    <TableHead className="text-[11px] text-slate-500">Правило</TableHead>
+   866→                    <TableHead className="text-[11px] text-slate-500">Сообщение</TableHead>
+   867→                    <TableHead className="text-[11px] text-slate-500">Клиент</TableHead>
+   868→                    <TableHead className="pr-4 text-[11px] text-slate-500">Время</TableHead>
+   869→                  </TableRow>
+   870→                </TableHeader>
+   871→                <TableBody>
+   872→                  {latestAlerts.length === 0 ? (
+   873→                    <TableRow>
+   874→                      <TableCell colSpan={5} className="py-6 text-center text-xs text-slate-500">
+   875→                        Тревог пока нет — трафик штатный
+   876→                      </TableCell>
+   877→                    </TableRow>
+   878→                  ) : (
+   879→                    latestAlerts.map((a) => <AlertRow key={a.id} alert={a} />)
+   880→                  )}
+   881→                </TableBody>
+   882→              </Table>
+   883→            </div>
+   884→          </CardContent>
+   885→        </Card>
+   886→      </div>
+   887→
+   888→      <PacketDetailSheet
+   889→        packet={selected}
+   890→        open={sheetOpen}
+   891→        onOpenChange={setSheetOpen}
+   892→        detail={detail}
+   893→        loading={detailLoading}
+   894→      />
+   895→    </div>
+   896→  );
+   897→}
+   898→
+   899→function AlertRow({ alert }: { alert: Alert }) {
+   900→  return (
+   901→    <TableRow className="border-slate-800/70">
+   902→      <TableCell className="py-2 pl-4">
+   903→        <SeverityBadge severity={alert.severity} />
+   904→      </TableCell>
+   905→      <TableCell className="max-w-[140px] truncate py-2 text-xs font-medium text-slate-200">
+   906→        {alert.rule}
+   907→      </TableCell>
+   908→      <TableCell className="max-w-[280px] truncate py-2 text-xs text-slate-400">
+   909→        {alert.message}
+   910→      </TableCell>
+   911→      <TableCell className="max-w-[130px] truncate py-2 font-mono text-[11px] text-slate-400">
+   912→        {alert.client ?? "—"}
+   913→      </TableCell>
+   914→      <TableCell className="whitespace-nowrap py-2 pr-4 font-mono text-[11px] text-slate-400">
+   915→        {fmtTime(alert.createdAt)}
+   916→      </TableCell>
+   917→    </TableRow>
+   918→  );
+   919→}
+   920→
+   921→export function SnifferTabSkeleton() {
+   922→  return (
+   923→    <div className="space-y-4">
+   924→      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+   925→        {Array.from({ length: 4 }).map((_, i) => (
+   926→          <Skeleton key={i} className="h-[76px] rounded-lg bg-slate-800/60" />
+   927→        ))}
+   928→      </div>
+   929→      <Skeleton className="h-[200px] rounded-lg bg-slate-800/60" />
+   930→      <Skeleton className="h-[120px] rounded-lg bg-slate-800/60" />
+   931→      <Skeleton className="h-[320px] rounded-lg bg-slate-800/60" />
+   932→    </div>
+   933→  );
+   934→}
+   935→

@@ -19,6 +19,9 @@ import {
   Inbox,
   FileJson,
   FileSpreadsheet,
+  Copy,
+  FileSearch,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,9 +60,10 @@ import {
   type Packet,
   type Alert,
 } from "@/hooks/use-sniffer-stream";
-import { PpsChart } from "@/components/dashboard/pps-chart";
+import { PpsChart, type ChartMetric } from "@/components/dashboard/pps-chart";
 import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
-import { fmtBytes, fmtClock, fmtTime, fmtCompact, protocolColor } from "@/lib/format";
+import { Sparkline } from "@/components/dashboard/sparkline";
+import { fmtBytes, fmtClock, fmtTime, fmtCompact, fmtRate, protocolColor } from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
 
@@ -82,28 +86,37 @@ function StatCard({
   sub,
   icon: Icon,
   alert,
+  spark,
 }: {
   label: string;
   value: string;
   sub?: string;
   icon: React.ComponentType<{ className?: string }>;
   alert?: boolean;
+  spark?: React.ReactNode;
 }) {
   return (
-    <Card className={`border-slate-800 bg-slate-900/60 ${alert ? "border-red-500/40" : ""}`}>
+    <Card
+      className={`group border-slate-800 bg-slate-900/60 transition-colors duration-200 ${
+        alert
+          ? "border-red-500/40 hover:border-red-500/60"
+          : "hover:border-emerald-500/40"
+      }`}
+    >
       <CardContent className="flex items-center gap-3 p-4">
         <span
-          className={`flex size-11 shrink-0 items-center justify-center rounded-lg border ${
+          className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105 ${
             alert ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"
           }`}
         >
           <Icon className={`size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
         </span>
-        <div className="min-w-0">
-          <div className="truncate text-lg font-bold leading-tight text-slate-50">{value}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-lg font-bold leading-tight text-slate-50 tabular-nums">{value}</div>
           <div className="truncate text-xs text-slate-400">{label}</div>
           {sub && <div className="truncate text-[10px] text-slate-500">{sub}</div>}
         </div>
+        {spark && <div className="hidden shrink-0 pl-1 sm:block">{spark}</div>}
       </CardContent>
     </Card>
   );
@@ -154,17 +167,21 @@ function StateBadge({ state }: { state: string }) {
 
 function PacketDetailSheet({
   packet,
+  pendingId,
   open,
   onOpenChange,
   detail,
   loading,
 }: {
   packet: Packet | null;
+  pendingId: number | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   detail: { hexdump: string } | null;
   loading: boolean;
 }) {
+  const [copied, setCopied] = useState(false);
+
   const rows: [string, string][] = packet
     ? [
         ["ID", `#${packet.id}`],
@@ -183,6 +200,19 @@ function PacketDetailSheet({
       ]
     : [];
 
+  const hexdumpText = detail?.hexdump ?? packet?.hexPreview ?? "";
+
+  const handleCopy = async () => {
+    if (!hexdumpText) return;
+    try {
+      await navigator.clipboard.writeText(hexdumpText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard недоступен */
+    }
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -191,13 +221,13 @@ function PacketDetailSheet({
       >
         <SheetHeader className="p-0 pb-2 text-left">
           <SheetTitle className="text-base text-slate-100">
-            Пакет {packet ? `#${packet.id}` : ""}
+            Пакет {packet ? `#${packet.id}` : pendingId ? `#${pendingId}` : ""}
           </SheetTitle>
           <SheetDescription className="text-xs text-slate-400">
-            {packet ? packet.summary : ""}
+            {packet ? packet.summary : pendingId ? "Загрузка пакета из буфера сервера…" : ""}
           </SheetDescription>
         </SheetHeader>
-        {packet && (
+        {packet ? (
           <div className="mt-2 space-y-3">
             <div className="rounded-lg border border-slate-800">
               <Table>
@@ -216,21 +246,39 @@ function PacketDetailSheet({
               </Table>
             </div>
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Hexdump {loading ? "" : detail ? "(до 2 КБ)" : ""}
-              </p>
+              <div className="mb-1 flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Hexdump {loading ? "" : detail ? "(до 2 КБ)" : ""}
+                </p>
+                {!loading && hexdumpText && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleCopy}
+                    className="h-7 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-emerald-300"
+                    aria-label="Скопировать hexdump"
+                  >
+                    <Copy className="size-3" aria-hidden />
+                    {copied ? "скопировано" : "копировать"}
+                  </Button>
+                )}
+              </div>
               {loading ? (
                 <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
                   <Loader2 className="size-4 animate-spin" aria-hidden /> Загрузка дампа…
                 </div>
               ) : (
                 <pre className="max-h-72 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[10px] leading-relaxed text-emerald-300 custom-scroll">
-                  {detail?.hexdump ?? packet.hexPreview}
+                  {hexdumpText}
                 </pre>
               )}
             </div>
           </div>
-        )}
+        ) : pendingId ? (
+          <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
+            <Loader2 className="size-4 animate-spin" aria-hidden /> Запрос GET /api/sniffer/packet/{pendingId}…
+          </div>
+        ) : null}
       </SheetContent>
     </Sheet>
   );
@@ -249,11 +297,15 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [frozenPackets, setFrozenPackets] = useState<Packet[] | null>(null);
   const [muted, setMuted] = useState(false);
   const [selected, setSelected] = useState<Packet | null>(null);
+  const [pendingId, setPendingId] = useState<number | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [detail, setDetail] = useState<{ hexdump: string } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [metric, setMetric] = useState<ChartMetric>("pps");
   const [scenarioBusy, setScenarioBusy] = useState<ScenarioId | "stop" | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const tableCardRef = useRef<HTMLDivElement>(null);
   const alertToastSeenRef = useRef<string | null>(null);
 
   // Тосты по живым алертам (если не в mute) — реагируем только на новые id
@@ -329,6 +381,68 @@ export function SnifferTab({ live }: SnifferTabProps) {
     }
   };
 
+  // Горячие клавиши вкладки: P — пауза, / — фокус на поиск
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing =
+        !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (e.key.toLowerCase() === "p" || e.key === "з") {
+        if (typing || sheetOpen) return;
+        e.preventDefault();
+        handlePause();
+      } else if (e.key === "/") {
+        if (sheetOpen) return;
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sheetOpen, packets, paused]);
+
+  const openPacketById = (id: number) => {
+    const local = packets.find((p) => p.id === id);
+    if (local) {
+      onRowClick(local);
+      return;
+    }
+    setPendingId(id);
+    setSelected(null);
+    setSheetOpen(true);
+    setDetail(null);
+    setDetailLoading(true);
+    fetch(`/api/sniffer/packet/${id}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? "notfound" : String(r.status)))))
+      .then((d: { packet: Packet; hexdump: string }) => {
+        setSelected(d.packet);
+        setDetail({ hexdump: d.hexdump });
+      })
+      .catch(() => {
+        toast.error(`Пакет #${id} недоступен`, {
+          description: "Вытеснен из кольцевого буфера сниффера (5000 пакетов).",
+          duration: 3000,
+        });
+        setSheetOpen(false);
+      })
+      .finally(() => {
+        setPendingId(null);
+        setDetailLoading(false);
+      });
+  };
+
+  const filterByClient = (clientAddr: string) => {
+    const ip = clientAddr.split(":")[0];
+    setSearch(ip);
+    setPaused(false);
+    setFrozenPackets(null);
+    tableCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast(`Фильтр по клиенту ${ip}`, {
+      description: "Таблица пакетов отфильтрована по адресам этого клиента.",
+      duration: 2500,
+    });
+  };
+
   const filtered = useMemo(() => {
     const source = paused && frozenPackets ? frozenPackets : packets;
     const s = search.trim().toLowerCase();
@@ -351,6 +465,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const latestAlerts = alerts.slice(0, 50);
   const sessionList = sessions.slice(0, 12);
 
+  // Активные фильтры → чипы с быстрым сбросом
+  const chips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (search.trim()) out.push({ key: "search", label: `поиск: ${search.trim()}`, clear: () => setSearch("") });
+    if (protocol !== "all") out.push({ key: "proto", label: `протокол: ${protocol}`, clear: () => setProtocol("all") });
+    if (direction !== "all") out.push({ key: "dir", label: direction === "TX" ? "только TX" : "только RX", clear: () => setDirection("all") });
+    if (minSize) out.push({ key: "min", label: `≥ ${minSize} Б`, clear: () => setMinSize("") });
+    if (maxSize) out.push({ key: "max", label: `≤ ${maxSize} Б`, clear: () => setMaxSize("") });
+    return out;
+  }, [search, protocol, direction, minSize, maxSize]);
+
   const onRowClick = (p: Packet) => {
     setSelected(p);
     setSheetOpen(true);
@@ -372,12 +497,14 @@ export function SnifferTab({ live }: SnifferTabProps) {
           label="Пакеты всего"
           value={stats ? fmtCompact(stats.totalPackets) : "—"}
           sub={stats ? `${stats.lastPps} п/с · ${stats.invalidPackets} невалидных` : undefined}
+          spark={<Sparkline data={series.map((s) => s.pps)} stroke="#10b981" />}
         />
         <StatCard
           icon={HardDrive}
           label="Байт перехвачено"
           value={stats ? fmtBytes(stats.totalBytes) : "—"}
-          sub={stats ? `${fmtCompact(stats.lastBps)} Б/с` : undefined}
+          sub={stats ? fmtRate(stats.lastBps) : undefined}
+          spark={<Sparkline data={series.map((s) => s.bps)} stroke="#22d3ee" />}
         />
         <StatCard
           icon={Network}
@@ -466,16 +593,39 @@ export function SnifferTab({ live }: SnifferTabProps) {
       <Card className="border-slate-800 bg-slate-900/60">
         <CardHeader className="p-4 pb-2">
           <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-200">
-            <span>Пакетов в секунду (pps)</span>
-            {stats && (
-              <Badge variant="outline" className="border-slate-700 font-mono text-[10px] text-slate-400">
-                uptime {Math.floor(stats.uptimeSec / 60)}м {stats.uptimeSec % 60}с
-              </Badge>
-            )}
+            <span className="flex flex-wrap items-center gap-2">
+              {metric === "pps" ? "Пакетов в секунду" : "Байтов в секунду"}
+              {stats && (
+                <Badge variant="outline" className="border-slate-700 font-mono text-[10px] text-slate-400">
+                  uptime {Math.floor(stats.uptimeSec / 60)}м {stats.uptimeSec % 60}с
+                </Badge>
+              )}
+            </span>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={metric}
+              onValueChange={(v) => v && setMetric(v as ChartMetric)}
+            >
+              <ToggleGroupItem
+                value="pps"
+                aria-label="Метрика: пакетов в секунду"
+                className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-emerald-500/15 data-[state=on]:text-emerald-300"
+              >
+                пак/с
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="bps"
+                aria-label="Метрика: байтов в секунду"
+                className="h-8 border-slate-700 px-2.5 text-[11px] text-slate-400 data-[state=on]:bg-cyan-500/15 data-[state=on]:text-cyan-300"
+              >
+                Б/с
+              </ToggleGroupItem>
+            </ToggleGroup>
           </CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4 pt-0">
-          <PpsChart series={series} />
+          <PpsChart series={series} metric={metric} />
         </CardContent>
       </Card>
 
@@ -505,6 +655,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
             </Label>
             <Input
               id="pkt-search"
+              ref={searchInputRef}
               placeholder="напр. sendTanksState или 10.8.0.51"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -619,8 +770,45 @@ export function SnifferTab({ live }: SnifferTabProps) {
         </CardContent>
       </Card>
 
+      {/* Активные фильтры (чипы) */}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" role="status" aria-label="Активные фильтры">
+          <span className="text-[11px] uppercase tracking-wider text-slate-500">Фильтры:</span>
+          {chips.map((c) => (
+            <span
+              key={c.key}
+              className="inline-flex max-w-[260px] items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 py-1 pl-2.5 pr-1 text-[11px] text-emerald-300"
+            >
+              <span className="truncate font-mono">{c.label}</span>
+              <button
+                type="button"
+                onClick={c.clear}
+                aria-label={`Сбросить фильтр ${c.label}`}
+                className="flex size-5 shrink-0 items-center justify-center rounded-full hover:bg-emerald-500/20"
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </span>
+          ))}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setSearch("");
+              setProtocol("all");
+              setDirection("all");
+              setMinSize("");
+              setMaxSize("");
+            }}
+            className="h-7 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          >
+            сбросить всё
+          </Button>
+        </div>
+      )}
+
       {/* Таблица пакетов */}
-      <Card className="border-slate-800 bg-slate-900/60">
+      <Card ref={tableCardRef} className="scroll-mt-20 border-slate-800 bg-slate-900/60">
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
           <CardTitle className="flex flex-wrap items-center gap-2 text-sm text-slate-200">
             <span className="flex items-center gap-2">
@@ -725,7 +913,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                         idx % 2 === 1 ? "bg-slate-950/40" : ""
                       }`}
                     >
-                      <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400">
+                      <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400 tabular-nums">
                         {fmtTime(p.ts)}
                       </TableCell>
                       <TableCell className="py-2">
@@ -745,7 +933,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       <TableCell className="max-w-[180px] truncate py-2 font-mono text-xs text-slate-200">
                         {p.methodType ?? p.method ?? p.msgType ?? "—"}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap py-2 text-right font-mono text-xs text-slate-300">
+                      <TableCell className="whitespace-nowrap py-2 text-right font-mono text-xs text-slate-300 tabular-nums">
                         {fmtBytes(p.size)}
                       </TableCell>
                       <TableCell className="py-2">
@@ -796,8 +984,18 @@ export function SnifferTab({ live }: SnifferTabProps) {
                     </TableRow>
                   ) : (
                     sessionList.map((s) => (
-                      <TableRow key={s.id} className="border-slate-800/70">
-                        <TableCell className="py-2 pl-4 font-mono text-xs text-slate-200">{s.client}</TableCell>
+                      <TableRow
+                        key={s.id}
+                        onClick={() => filterByClient(s.client)}
+                        title="Нажмите — фильтровать таблицу пакетов по клиенту"
+                        className="cursor-pointer border-slate-800/70 transition-colors hover:bg-emerald-500/5"
+                      >
+                        <TableCell className="py-2 pl-4 font-mono text-xs text-slate-200">
+                          <span className="inline-flex items-center gap-1.5">
+                            {s.client}
+                            <FileSearch className="size-3 text-slate-600" aria-hidden />
+                          </span>
+                        </TableCell>
                         <TableCell className="max-w-[120px] truncate py-2 text-xs text-slate-300">
                           {s.portName}
                         </TableCell>
@@ -876,7 +1074,9 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    latestAlerts.map((a) => <AlertRow key={a.id} alert={a} />)
+                    latestAlerts.map((a) => (
+                      <AlertRow key={a.id} alert={a} onOpenPacket={openPacketById} />
+                    ))
                   )}
                 </TableBody>
               </Table>
@@ -887,6 +1087,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
 
       <PacketDetailSheet
         packet={selected}
+        pendingId={pendingId}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         detail={detail}
@@ -896,14 +1097,22 @@ export function SnifferTab({ live }: SnifferTabProps) {
   );
 }
 
-function AlertRow({ alert }: { alert: Alert }) {
+function AlertRow({ alert, onOpenPacket }: { alert: Alert; onOpenPacket: (id: number) => void }) {
+  const clickable = alert.packetId != null;
   return (
-    <TableRow className="border-slate-800/70">
+    <TableRow
+      onClick={clickable ? () => onOpenPacket(alert.packetId!) : undefined}
+      title={clickable ? `Открыть пакет #${alert.packetId}` : undefined}
+      className={`border-slate-800/70 ${clickable ? "cursor-pointer transition-colors hover:bg-amber-500/5" : ""}`}
+    >
       <TableCell className="py-2 pl-4">
         <SeverityBadge severity={alert.severity} />
       </TableCell>
       <TableCell className="max-w-[140px] truncate py-2 text-xs font-medium text-slate-200">
-        {alert.rule}
+        <span className="inline-flex items-center gap-1.5">
+          {alert.rule}
+          {clickable && <FileSearch className="size-3 shrink-0 text-slate-600" aria-hidden />}
+        </span>
       </TableCell>
       <TableCell className="max-w-[280px] truncate py-2 text-xs text-slate-400">
         {alert.message}
@@ -911,7 +1120,7 @@ function AlertRow({ alert }: { alert: Alert }) {
       <TableCell className="max-w-[130px] truncate py-2 font-mono text-[11px] text-slate-400">
         {alert.client ?? "—"}
       </TableCell>
-      <TableCell className="whitespace-nowrap py-2 pr-4 font-mono text-[11px] text-slate-400">
+      <TableCell className="whitespace-nowrap py-2 pr-4 font-mono text-[11px] text-slate-400 tabular-nums">
         {fmtTime(alert.createdAt)}
       </TableCell>
     </TableRow>
