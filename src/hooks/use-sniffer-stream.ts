@@ -52,6 +52,19 @@ export interface SeriesPoint {
   bps: number;
 }
 
+export interface ScenarioState {
+  id: string;
+  label: string;
+  endsAt: string;
+}
+
+export interface ScenarioDef {
+  id: string;
+  label: string;
+  description: string;
+  durationSec: number;
+}
+
 export interface SnifferStats {
   startedAt: string;
   uptimeSec: number;
@@ -82,6 +95,7 @@ export interface SnifferLiveState {
   alerts: Alert[]; // новые первыми
   stats: SnifferStats | null;
   series: SeriesPoint[];
+  scenario: ScenarioState | null;
   retrySec: number | null;
 }
 
@@ -101,6 +115,7 @@ export function useSnifferStream(): SnifferLiveState {
     alerts: [],
     stats: null,
     series: [],
+    scenario: null,
     retrySec: null,
   });
 
@@ -115,6 +130,7 @@ export function useSnifferStream(): SnifferLiveState {
   const alertBufRef = useRef<Alert[]>([]);
   const statsBufRef = useRef<SnifferStats | null>(null);
   const seriesBufRef = useRef<SeriesPoint[]>([]);
+  const scenarioBufRef = useRef<ScenarioState | null | undefined>(undefined);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dirtyRef = useRef(false);
 
@@ -155,7 +171,12 @@ export function useSnifferStream(): SnifferLiveState {
           series = [...prev.series, ...seriesBufRef.current].slice(-SERIES_CAP);
           seriesBufRef.current = [];
         }
-        return { ...prev, packets, sessions, alerts, stats, series };
+        let scenario = prev.scenario;
+        if (scenarioBufRef.current !== undefined) {
+          scenario = scenarioBufRef.current;
+          scenarioBufRef.current = undefined;
+        }
+        return { ...prev, packets, sessions, alerts, stats, series, scenario };
       });
     };
 
@@ -195,6 +216,7 @@ export function useSnifferStream(): SnifferLiveState {
             packets: Packet[];
             alerts: Alert[];
             series: SeriesPoint[];
+            scenario?: ScenarioState | null;
           };
           apply((prev) => ({
             ...prev,
@@ -203,6 +225,7 @@ export function useSnifferStream(): SnifferLiveState {
             alerts: [...snap.alerts].reverse().slice(0, CLIENT_ALERTS_CAP),
             stats: snap.stats,
             series: snap.series.slice(-SERIES_CAP),
+            scenario: snap.scenario ?? null,
           }));
         } catch {
           /* игнорируем битый кадр */
@@ -246,6 +269,17 @@ export function useSnifferStream(): SnifferLiveState {
             pps: st.lastPps,
             bps: st.lastBps,
           });
+          dirtyRef.current = true;
+        } catch {
+          /* noop */
+        }
+      });
+
+      es.addEventListener("scenario", (e) => {
+        try {
+          scenarioBufRef.current = JSON.parse(
+            (e as MessageEvent).data
+          ) as ScenarioState | null;
           dirtyRef.current = true;
         } catch {
           /* noop */

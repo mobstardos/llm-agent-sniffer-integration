@@ -103,9 +103,56 @@ export type HubEvent =
   | { type: "packet"; payload: Packet }
   | { type: "session"; payload: Session }
   | { type: "alert"; payload: Alert }
+  | { type: "scenario"; payload: ScenarioState | null }
   | { type: "stats"; payload: SnifferStats };
 
 export type HubListener = (ev: HubEvent) => void;
+
+// ---------------------------------------------------------------------------
+// Сценарии трафика (демо-режимы генератора)
+// ---------------------------------------------------------------------------
+
+export type ScenarioId = "azs_burst" | "thrift_storm" | "giant_attack" | "rollback_loop";
+
+export interface ScenarioDef {
+  id: ScenarioId;
+  label: string;
+  description: string;
+  durationSec: number;
+}
+
+export interface ScenarioState {
+  id: ScenarioId;
+  label: string;
+  endsAt: string; // ISO
+}
+
+export const SCENARIOS: ScenarioDef[] = [
+  {
+    id: "azs_burst",
+    label: "АЗС-всплеск",
+    description: "Массовый опрос кассовых АЗС: x4 пакет/с в канале RemoteServer TCP",
+    durationSec: 45,
+  },
+  {
+    id: "thrift_storm",
+    label: "Thrift-шторм",
+    description: "Поток Thrift-исключений EXCEPTION — правило «Thrift EXCEPTION» срабатывает часто",
+    durationSec: 30,
+  },
+  {
+    id: "giant_attack",
+    label: "Гигантские пакеты",
+    description: "Каждый пакет > 1 МБ — спам правила «Гигантский пакет»",
+    durationSec: 20,
+  },
+  {
+    id: "rollback_loop",
+    label: "Откаты оплаты",
+    description: "Серии CASHLESS_ROLLBACK — срабатывает правило «Откат безналичной оплаты»",
+    durationSec: 25,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Константы, отражающие config.json реального сниффера
@@ -334,8 +381,14 @@ function draftThrift(
 ): PacketDraft {
   const method = pick(THRIFT_METHODS);
   const roll = Math.random();
+  // В обычном режиме EXCEPTION ~6%; в сценарии «Thrift-шторм» — ~30%
+  const exceptionRate = S.scenario?.id === "thrift_storm" ? 0.3 : 0.06;
   const msgType =
-    roll < 0.94 ? (direction === "TX" ? "CALL" : "REPLY") : "EXCEPTION";
+    roll >= exceptionRate
+      ? direction === "TX"
+        ? "CALL"
+        : "REPLY"
+      : "EXCEPTION";
   seqRef.seq += 1;
   const seq = seqRef.seq;
   const valid = msgType !== "EXCEPTION";
@@ -512,6 +565,7 @@ interface HubState {
   lastPps: number;
   lastBps: number;
   alertCooldown: Map<string, number>;
+  scenario: ScenarioState | null;
 }
 
 function createHubState(): HubState {
@@ -541,6 +595,7 @@ function createHubState(): HubState {
     lastPps: 0,
     lastBps: 0,
     alertCooldown: new Map(),
+    scenario: null,
   };
 }
 
@@ -553,7 +608,7 @@ globalForHub.__snifferHubState = S;
 
 // Если состояние пережило HMR от предыдущей версии кода — останавливаем
 // таймеры старых замыканий, чтобы новые версии tick()/makePacket() вступили в силу
-const MODULE_EPOCH = 4;
+const MODULE_EPOCH = 5;
 if (S.epoch !== MODULE_EPOCH) {
   if (S.genTimer) {
     clearInterval(S.genTimer);
@@ -754,6 +809,14 @@ function raiseAlert(
 function checkAlertRules(packet: Packet): void {
   const now = Date.now();
 
+  const cooldownFor = (rule: string): number => {
+    // В рамках сценариев частота тревог повышается — иначе шторм не виден
+    if (S.scenario?.id === "thrift_storm" && rule === "Thrift EXCEPTION") return 6_000;
+    if (S.scenario?.id === "giant_attack" && rule === "Гигантский пакет") return 7_000;
+    if (S.scenario?.id === "rollback_loop" && rule === "Откат безналичной оплаты") return 12_000;
+    return ALERT_COOLDOWN_MS;
+  };
+
   const fire = (rule: string, cooldownMs: number): boolean => {
     const last = S.alertCooldown.get(rule) ?? 0;
     if (now - last < cooldownMs) return false;
@@ -763,7 +826,7 @@ function checkAlertRules(packet: Packet): void {
 
   // 1. Thrift EXCEPTION — crit
   if (packet.protocol === "THRIFT" && packet.msgType === "EXCEPTION") {
-    if (fire("Thrift EXCEPTION", ALERT_COOLDOWN_MS)) {
+    if (fire("Thrift EXCEPTION", cooldownFor("Thrift EXCEPTION"))) {
       raiseAlert(
         "Thrift EXCEPTION",
         "crit",
@@ -780,7 +843,7 @@ function checkAlertRules(packet: Packet): void {
       (t) => now - t <= ROLLBACK_WINDOW_MS
     );
     if (S.rollbackTimes.length >= ROLLBACK_THRESHOLD) {
-      if (fire("Откат безналичной оплаты", ALERT_COOLDOWN_MS)) {
+      if (fire("Откат безналичной оплаты", cooldownFor("Откат безналичной оплаты"))) {
         S.rollbackTimes = [];
         raiseAlert(
           "Откат безналичной оплаты",
@@ -794,7 +857,7 @@ function checkAlertRules(packet: Packet): void {
 
   // 3. Гигантский пакет — warn
   if (packet.size > GIANT_SIZE) {
-    if (fire("Гигантский пакет", ALERT_COOLDOWN_MS)) {
+    if (fire("Гигантский пакет", cooldownFor("Гигантский пакет"))) {
       raiseAlert(
         "Гигантский пакет",
         "warn",
@@ -822,14 +885,14 @@ function checkAlertRules(packet: Packet): void {
 
 // ------------------------- генератор ---------------------------------------
 
-function makePacket(): Packet {
+function makePacket(scenarioId?: ScenarioId): Packet {
   // Пакет привязан к одной из активных сессий (как в реальном прокси):
   // стабильный клиент ip:port на время жизни сессии, протокол = канал сессии
   const active = [...S.sessions.values()].filter((s) => s.state === "active");
   const session = active.length > 0 ? pick(active) : null;
   const client = session ? session.client : randomClientAddr();
   const direction: Direction = Math.random() < 0.55 ? "TX" : "RX";
-  const protocol: Protocol = session
+  let protocol: Protocol = session
     ? session.protocol
     : weightedPick<Protocol>([
         ["REMOTE_SERVER", 45],
@@ -839,6 +902,15 @@ function makePacket(): Packet {
         ["MODBUS", 5],
         ["RAW", 2],
       ]);
+
+  // Профиль сценария: смещаем протокол/направление
+  if (scenarioId === "azs_burst") {
+    protocol = Math.random() < 0.8 ? "REMOTE_SERVER" : protocol;
+  } else if (scenarioId === "thrift_storm") {
+    protocol = "THRIFT";
+  } else if (scenarioId === "giant_attack") {
+    // протокол любой, размер зададим ниже
+  }
 
   let draft: PacketDraft;
   switch (protocol) {
@@ -864,8 +936,10 @@ function makePacket(): Packet {
       draft = draftRaw(client, direction);
   }
 
-  // редкие гигантские пакеты (~0.5%)
-  if (Math.random() < 0.005) {
+  // редкие гигантские пакеты (~0.5%) или сценарий «Гигантские пакеты»
+  if (scenarioId === "giant_attack") {
+    draft.packet.size = randInt(1_100_000, 1_500_000);
+  } else if (Math.random() < 0.005) {
     draft.packet.size = randInt(1_100_000, 1_400_000);
   }
 
@@ -900,10 +974,38 @@ function ingest(packet: Packet): void {
 }
 
 function tick(): void {
-  ingest(makePacket());
-  // Редкие всплески откатов безналичной оплаты (~2% тиков):
+  // Сценарии: множитель пакетов/профиль протокола
+  const sc = S.scenario;
+  if (sc && Date.now() > new Date(sc.endsAt).getTime()) {
+    // Сценарий самозавершился по таймеру
+    S.scenario = null;
+    emit({ type: "scenario", payload: null });
+  }
+
+  const scenarioId = S.scenario?.id;
+  const multiplier = scenarioId === "azs_burst" ? 4 : 1;
+  for (let i = 0; i < multiplier; i++) {
+    ingest(makePacket(scenarioId));
+  }
+
+  if (scenarioId === "rollback_loop") {
+    // Серии откатов на каждом тике — правило срабатывает нон-стоп
+    const active = [...S.sessions.values()].filter((s) => s.state === "active");
+    const rollbackClient = active.length > 0 ? pick(active).client : randomClientAddr();
+    for (let i = 0; i < 2; i++) {
+      const d = draftRemoteServer(rollbackClient, "TX", { c: 200, d: 111 });
+      ingest({
+        id: S.nextPacketId++,
+        ts: new Date().toISOString(),
+        hexPreview: hexdump(d.body, 128),
+        ...d.packet,
+      });
+    }
+  }
+
+  // Редкие всплески откатов безналичной оплаты (~2% тиков) вне сценария:
   // 2-3 пакета CASHLESS_ROLLBACK подряд — срабатывает правило алерта
-  if (Math.random() < 0.02) {
+  if (!scenarioId && Math.random() < 0.02) {
     const burst = randInt(2, 3);
     const active = [...S.sessions.values()].filter((s) => s.state === "active");
     const rollbackClient =
@@ -1016,6 +1118,35 @@ export function getSeries(): SeriesPoint[] {
   return [...S.series];
 }
 
+// ------------------------- сценарии ----------------------------------------
+
+export function getScenario(): ScenarioState | null {
+  if (!S.scenario) return null;
+  // Просроченный сценарий не возвращаем (чистим лениво)
+  if (Date.now() > new Date(S.scenario.endsAt).getTime()) return null;
+  return S.scenario;
+}
+
+export function startScenario(id: ScenarioId): ScenarioState | null {
+  const def = SCENARIOS.find((s) => s.id === id);
+  if (!def) return null;
+  const state: ScenarioState = {
+    id: def.id,
+    label: def.label,
+    endsAt: new Date(Date.now() + def.durationSec * 1000).toISOString(),
+  };
+  S.scenario = state;
+  emit({ type: "scenario", payload: state });
+  return state;
+}
+
+export function stopScenario(): ScenarioState | null {
+  const prev = S.scenario;
+  S.scenario = null;
+  emit({ type: "scenario", payload: null });
+  return prev;
+}
+
 export function getFullHexdump(packet: Packet): string {
   // Для демо: синтезируем до 2КБ данных на основе packet.summary
   const header = new TextEncoder().encode(packet.summary);
@@ -1055,6 +1186,7 @@ export async function resetHub(): Promise<void> {
   S.startedAt = new Date().toISOString();
   S.lastPps = 0;
   S.lastBps = 0;
+  S.scenario = null;
   ensureRunning();
   openSession();
   openSession();

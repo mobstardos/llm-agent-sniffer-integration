@@ -143,7 +143,7 @@ export default function HomePage() {
           </div>
         </footer>
 
-        <Toaster position="bottom-right" richColors closeButton />
+        <Toaster position="bottom-right" richColors closeButton duration={3000} />
       </div>
     </ThemeProvider>
   );

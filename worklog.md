@@ -117,3 +117,32 @@ Work Log:
 Stage Summary:
 - Dashboard полностью работоспособен и проверен в браузере (десктоп + мобайл)
 - Архитектурное знание для будущих итераций: в этом шаблоне shadcn ScrollArea с max-h-* на Root ломает клампинг — использовать нативные div с overflow-y-auto + custom-scroll
+
+---
+Task ID: cron-review-20261002-0100
+Agent: main (Z.ai Code)
+Task: Cron-обзор: QA всех вкладок + новые функции (сценарии трафика, экспорт, аналитика) + полировка стилей
+
+Work Log:
+- QA: agent-browser проверил все 4 вкладки и API (stats/packets/series) — стартовое состояние стабильно, ошибок в консоли нет
+- Feature A — Сценарии трафика (демо-режимы генератора):
+  * hub.ts: типы ScenarioId/ScenarioDef/ScenarioState, каталог SCENARIOS, состояние в HubState, события "scenario" в HubEvent
+  * 4 сценария: azs_burst (x4 пак/с, 80% REMOTE_SERVER, 45с), thrift_storm (THRIFT с 30% EXCEPTION, 30с), giant_attack (все пакеты >1МБ, 20с), rollback_loop (серии CASHLESS_ROLLBACK, 25с)
+  * checkAlertRules: пониженные кулдауны тревог внутри сценариев (6-12с) — чтобы шторм был виден
+  * API /api/sniffer/scenario: GET (активный+каталог), POST {id}, DELETE (стоп); автозавершение по таймеру в tick()
+  * UI: карточка «Сценарии трафика» с 4 кнопками + Остановить, амбер-подсветка и бейдж с обратным отсчётом при активном сценарии; тосты запуска/остановки
+- Feature B — Экспорт (аналог exports реального сниффера): /api/sniffer/export?format=jsonl|csv|sessions|alerts — traffic.jsonl, Excel-отчёт CSV с «;» и BOM, sessions.csv, alerts.jsonl; Content-Disposition с таймстампом; UI: DropdownMenu «Экспорт» в шапке таблицы пакетов
+- Feature C — Аналитика трафика: компонент protocol-breakdown.tsx — SVG-донат распределения протоколов (чистое вычисление сегментов без мутаций — под правило react-hooks/immutability) + Топ команд/методов (emerald-бары) + Активность клиентов (cyan-бары); карточка под графиком
+- Стили: pps-chart — сетка с подписями значений, осевая линия, бейджи «макс/сред», метка «окно 2 мин»; зебра строк таблицы пакетов; красивый empty-state (Inbox + подсказка) вместо текстовой заглушки
+- Хук use-sniffer-stream: поле scenario, обработчик SSE-события "scenario", буферизация в flush-цикле
+- Fixes: layout.tsx — убран неиспользуемый Radix Toaster (дублировал sonner в page.tsx, падал tsc на props); page.tsx Toaster + duration=3000; hub.ts MODULE_EPOCH 4→5 (после HMR старые таймеры без сценарной логики не эмитили завершение — таймеры перезапущены); тосты алертов теперь по уникальному id (не спамят при ретрае событий)
+
+Stage Summary:
+- Проверено в браузере: сценарии запускаются/останавливаются (curl + UI), автозавершение работает (POST → через 24с scenario=None), тревоги при thrift_storm каждые ~6с; все 4 экспорт-формата отдают файлы с корректным Content-Disposition; донат/топы рендерятся; зебра и empty-state на месте; мобайл 390px OK
+- lint: 0 ошибок; tsc: чисто (кроме pre-existing examples/skills вне проекта); dev.log без ошибок
+- Файлы: +2 роута (scenario, export), +protocol-breakdown.tsx, изменены hub.ts, use-sniffer-stream.ts, sniffer-tab.tsx, pps-chart.tsx, layout.tsx, page.tsx
+
+Unresolved / next:
+- ПКAP-экспорт не делаем (синтетический трафик без реальных TCP-заголовков — честнее не притворяться)
+- Идея: клик по сессии → фильтр таблицы по клиенту; «Заморозка графика» при паузе уже ок
+- При желании: светлую тему не добавлять — панель аутентично тёмная, но компоненты захардкожены под dark

@@ -6,6 +6,7 @@ import {
   getRecentPackets,
   getLiveAlerts,
   getSeries,
+  getScenario,
   type HubEvent,
 } from "@/lib/sniffer/hub";
 
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
         packets: getRecentPackets(200),
         alerts: getLiveAlerts(100),
         series: getSeries(),
+        scenario: getScenario(),
       });
 
       // 2) Подписка на события хаба

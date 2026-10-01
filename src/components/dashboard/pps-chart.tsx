@@ -10,26 +10,30 @@ interface PpsChartProps {
 
 /**
  * Лёгкий SVG-график pps (пакетов/с) без зависимостей:
- * линия + градиентная заливка (emerald), пунктир — bps-масштаб.
+ * линия + градиентная заливка (emerald), сетка, подписи осей.
  */
-export function PpsChart({ series, height = 140 }: PpsChartProps) {
+export function PpsChart({ series, height = 150 }: PpsChartProps) {
   const W = 600;
-  const H = 140;
+  const H = 150;
 
-  const { linePath, areaPath, maxPps, points } = useMemo(() => {
+  const { linePath, areaPath, maxPps, points, gridLines } = useMemo(() => {
     const data = series.slice(-120); // последние 2 минуты
-    const maxPpsLocal = Math.max(6, ...data.map((d) => d.pps));
+    const maxPpsLocal = Math.max(8, ...data.map((d) => d.pps));
     const pts = data.map((d, i) => {
       const x = data.length <= 1 ? W : (i / (data.length - 1)) * W;
-      const y = H - 8 - (d.pps / maxPpsLocal) * (H - 24);
+      const y = H - 20 - (d.pps / maxPpsLocal) * (H - 34);
       return { x, y, d };
     });
+    const grid = [0.25, 0.5, 0.75].map((f) => ({
+      y: 14 + f * (H - 34),
+      value: Math.round(maxPpsLocal * (1 - f)),
+    }));
     if (pts.length === 0) {
-      return { linePath: "", areaPath: "", maxPps: maxPpsLocal, points: [] };
+      return { linePath: "", areaPath: "", maxPps: maxPpsLocal, points: [], gridLines: grid };
     }
     const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-    const area = `${line} L${pts[pts.length - 1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`;
-    return { linePath: line, areaPath: area, maxPps: maxPpsLocal, points: pts };
+    const area = `${line} L${pts[pts.length - 1].x.toFixed(1)},${H - 20} L${pts[0].x.toFixed(1)},${H - 20} Z`;
+    return { linePath: line, areaPath: area, maxPps: maxPpsLocal, points: pts, gridLines: grid };
   }, [series]);
 
   if (series.length === 0) {
@@ -44,6 +48,7 @@ export function PpsChart({ series, height = 140 }: PpsChartProps) {
   }
 
   const last = points[points.length - 1];
+  const avg = Math.round(points.reduce((a, p) => a + p.d.pps, 0) / points.length);
 
   return (
     <div className="relative" aria-label="График пакетов в секунду">
@@ -60,18 +65,37 @@ export function PpsChart({ series, height = 140 }: PpsChartProps) {
             <stop offset="100%" stopColor="#10b981" stopOpacity="0.02" />
           </linearGradient>
         </defs>
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line
-            key={f}
-            x1="0"
-            x2={W}
-            y1={H * f}
-            y2={H * f}
-            stroke="#334155"
-            strokeDasharray="4 6"
-            strokeWidth="1"
-          />
+
+        {/* Горизонтальная сетка + подписи значений */}
+        {gridLines.map((g) => (
+          <g key={g.y}>
+            <line
+              x1="0"
+              x2={W}
+              y1={g.y}
+              y2={g.y}
+              stroke="#334155"
+              strokeDasharray="4 6"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text x="4" y={g.y - 3} className="fill-slate-600" style={{ fontSize: 9 }}>
+              {g.value}
+            </text>
+          </g>
         ))}
+
+        {/* Осевая линия (низ) */}
+        <line
+          x1="0"
+          x2={W}
+          y1={H - 20}
+          y2={H - 20}
+          stroke="#475569"
+          strokeWidth="1"
+          vectorEffect="non-scaling-stroke"
+        />
+
         {areaPath && <path d={areaPath} fill="url(#ppsFill)" />}
         {linePath && (
           <path
@@ -86,11 +110,17 @@ export function PpsChart({ series, height = 140 }: PpsChartProps) {
           <circle cx={last.x} cy={last.y} r="3.5" fill="#10b981" stroke="#022c22" strokeWidth="1.5" />
         )}
       </svg>
-      <div className="pointer-events-none absolute right-2 top-1 rounded bg-slate-900/80 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
-        макс {maxPps} п/с
+
+      <div className="pointer-events-none absolute right-2 top-1 flex gap-1.5">
+        <span className="rounded bg-slate-900/85 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
+          макс {maxPps}
+        </span>
+        <span className="rounded bg-slate-900/85 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+          сред {avg}
+        </span>
       </div>
-      <div className="pointer-events-none absolute bottom-1 left-2 rounded bg-slate-900/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
-        {series.length > 0 ? new Date(series[series.length - 1].ts).toLocaleTimeString("ru-RU") : ""}
+      <div className="pointer-events-none absolute bottom-1 left-2 rounded bg-slate-900/85 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+        {new Date(series[series.length - 1].ts).toLocaleTimeString("ru-RU")} · окно 2 мин
       </div>
     </div>
   );

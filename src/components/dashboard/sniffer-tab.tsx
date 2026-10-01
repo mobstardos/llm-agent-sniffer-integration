@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -13,9 +13,22 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  Zap,
+  Square,
+  Download,
+  Inbox,
+  FileJson,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,9 +58,19 @@ import {
   type Alert,
 } from "@/hooks/use-sniffer-stream";
 import { PpsChart } from "@/components/dashboard/pps-chart";
+import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
 import { fmtBytes, fmtClock, fmtTime, fmtCompact, protocolColor } from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
+
+const SCENARIO_CATALOG = [
+  { id: "azs_burst", label: "АЗС-всплеск", hint: "x4 пак/с, RemoteServer" },
+  { id: "thrift_storm", label: "Thrift-шторм", hint: "поток EXCEPTION" },
+  { id: "giant_attack", label: "Гигантские пакеты", hint: "> 1 МБ каждый" },
+  { id: "rollback_loop", label: "Откаты оплаты", hint: "CASHLESS_ROLLBACK" },
+] as const;
+
+type ScenarioId = (typeof SCENARIO_CATALOG)[number]["id"];
 
 interface SnifferTabProps {
   live: ReturnType<typeof useSnifferStream>;
@@ -214,7 +237,7 @@ function PacketDetailSheet({
 }
 
 export function SnifferTab({ live }: SnifferTabProps) {
-  const { connected, packets, sessions, alerts, stats, series } = live;
+  const { connected, packets, sessions, alerts, stats, series, scenario } = live;
 
   // Фильтры
   const [search, setSearch] = useState("");
@@ -229,20 +252,68 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [detail, setDetail] = useState<{ hexdump: string } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [scenarioBusy, setScenarioBusy] = useState<ScenarioId | "stop" | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const alertToastSeenRef = useRef<string | null>(null);
 
-  // Тосты по живым алертам (если не в mute)
+  // Тосты по живым алертам (если не в mute) — реагируем только на новые id
   useEffect(() => {
     if (muted || alerts.length === 0) return;
     const latest = alerts[0];
+    if (alertToastSeenRef.current === latest.id) return;
     const t = new Date(latest.createdAt).getTime();
     if (Date.now() - t < 2500) {
+      alertToastSeenRef.current = latest.id;
       if (latest.severity === "crit") {
         toast.error(latest.rule, { description: latest.message, duration: 3500 });
       } else {
         toast.warning(latest.rule, { description: latest.message, duration: 3000 });
       }
     }
-  }, [alerts.length]);
+  }, [alerts, muted]);
+
+  // Тикаем часы для обратного отсчёта сценария
+  useEffect(() => {
+    if (!scenario) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [scenario]);
+
+  const scenarioRemaining = useMemo(() => {
+    if (!scenario) return 0;
+    return Math.max(0, Math.ceil((new Date(scenario.endsAt).getTime() - nowTick) / 1000));
+  }, [scenario, nowTick]);
+
+  const handleScenario = async (id: ScenarioId | "stop") => {
+    setScenarioBusy(id);
+    try {
+      const res =
+        id === "stop"
+          ? await fetch("/api/sniffer/scenario", { method: "DELETE" })
+          : await fetch("/api/sniffer/scenario", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id }),
+            });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (id === "stop") {
+        toast("Сценарий остановлен", { duration: 2000 });
+      } else {
+        const def = SCENARIO_CATALOG.find((s) => s.id === id);
+        toast.success(`Сценарий «${def?.label}» запущен`, {
+          description: "Генератор трафика изменил профиль — следите за графиком и тревогами.",
+          duration: 3000,
+        });
+      }
+    } catch (e) {
+      toast.error("Не удалось изменить сценарий", {
+        description: e instanceof Error ? e.message : String(e),
+        duration: 3000,
+      });
+    } finally {
+      setScenarioBusy(null);
+    }
+  };
 
   const handlePause = () => {
     if (!paused) {
@@ -323,6 +394,74 @@ export function SnifferTab({ live }: SnifferTabProps) {
         />
       </div>
 
+      {/* Сценарии трафика (демо-режимы генератора) */}
+      <Card
+        className={`border-slate-800 bg-slate-900/60 ${
+          scenario ? "border-amber-500/50 shadow-[0_0_18px_-6px] shadow-amber-500/30" : ""
+        }`}
+      >
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+            <Zap className={`size-4 ${scenario ? "text-amber-400" : "text-emerald-400"}`} aria-hidden />
+            Сценарии трафика
+            {scenario && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/50 bg-amber-500/10 font-mono text-[10px] text-amber-300"
+              >
+                {scenario.label} · осталось {scenarioRemaining}с
+              </Badge>
+            )}
+          </CardTitle>
+          <span className="text-[11px] text-slate-500">
+            демо-режимы генератора — как если бы АЗС начали массовый опрос
+          </span>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2 p-4 pt-0">
+          {SCENARIO_CATALOG.map((s) => {
+            const isActive = scenario?.id === s.id;
+            const busy = scenarioBusy === s.id;
+            return (
+              <Button
+                key={s.id}
+                size="sm"
+                variant="outline"
+                disabled={scenarioBusy !== null}
+                onClick={() => handleScenario(s.id)}
+                aria-pressed={isActive}
+                className={`min-h-[44px] flex-col items-start gap-0 border-slate-700 sm:min-h-[40px] ${
+                  isActive
+                    ? "border-amber-500/60 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                    : "bg-slate-950 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                }`}
+              >
+                <span className="flex items-center gap-1.5 text-xs font-medium">
+                  {busy && <Loader2 className="size-3 animate-spin" aria-hidden />}
+                  {s.label}
+                </span>
+                <span className="font-mono text-[10px] text-slate-500">{s.hint}</span>
+              </Button>
+            );
+          })}
+          {scenario && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={scenarioBusy !== null}
+              onClick={() => handleScenario("stop")}
+              className="ml-auto min-h-[44px] border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 sm:min-h-[40px]"
+            >
+              {scenarioBusy === "stop" ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Square className="size-3.5" aria-hidden />
+              )}
+              Остановить
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
       {/* График */}
       <Card className="border-slate-800 bg-slate-900/60">
         <CardHeader className="p-4 pb-2">
@@ -339,6 +478,23 @@ export function SnifferTab({ live }: SnifferTabProps) {
           <PpsChart series={series} />
         </CardContent>
       </Card>
+
+      {/* Распределение протоколов + топы */}
+      {stats && (
+        <Card className="border-slate-800 bg-slate-900/60">
+          <CardHeader className="p-4 pb-3">
+            <CardTitle className="text-sm text-slate-200">Аналитика трафика</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <ProtocolBreakdown
+              perProtocol={stats.perProtocol}
+              totalPackets={stats.totalPackets}
+              topMethods={stats.topMethods}
+              topClients={stats.topClients}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Фильтры */}
       <Card className="border-slate-800 bg-slate-900/60">
@@ -465,8 +621,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
 
       {/* Таблица пакетов */}
       <Card className="border-slate-800 bg-slate-900/60">
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-200">
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm text-slate-200">
             <span className="flex items-center gap-2">
               Поток пакетов
               {paused && (
@@ -486,6 +642,47 @@ export function SnifferTab({ live }: SnifferTabProps) {
               </span>
             )}
           </CardTitle>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+              >
+                <Download className="size-3.5" aria-hidden />
+                Экспорт
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500">
+                как в реальном сниффере
+              </DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <a href="/api/sniffer/export?format=jsonl" download className="cursor-pointer">
+                  <FileJson className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+                  traffic.jsonl — пакеты
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href="/api/sniffer/export?format=csv" download className="cursor-pointer">
+                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+                  отчёт CSV — сводка + пакеты
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href="/api/sniffer/export?format=sessions" download className="cursor-pointer">
+                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+                  sessions.csv — сессии
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href="/api/sniffer/export?format=alerts" download className="cursor-pointer">
+                  <FileJson className="mr-2 size-3.5 text-amber-400" aria-hidden />
+                  alerts.jsonl — журнал тревог
+                </a>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </CardHeader>
         <CardContent className="p-0 pb-2">
           <div className="max-h-[60vh] overflow-y-auto custom-scroll">
@@ -505,16 +702,28 @@ export function SnifferTab({ live }: SnifferTabProps) {
               <TableBody>
                 {display.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-10 text-center text-sm text-slate-500">
-                      {connected ? "Ожидание пакетов…" : "Нет соединения с потоком сниффера"}
+                    <TableCell colSpan={8} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <Inbox className="size-8 text-slate-600" aria-hidden />
+                        <span className="text-sm text-slate-400">
+                          {connected ? "Пакетов по фильтру не найдено" : "Нет соединения с потоком сниффера"}
+                        </span>
+                        <span className="text-[11px] text-slate-600">
+                          {connected
+                            ? "Ослабьте фильтры или дождитесь новых пакетов — поток живёт"
+                            : "Переподключение к /api/sniffer/stream…"}
+                        </span>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  display.map((p) => (
+                  display.map((p, idx) => (
                     <TableRow
                       key={p.id}
                       onClick={() => onRowClick(p)}
-                      className="cursor-pointer border-slate-800/70 hover:bg-slate-800/50"
+                      className={`cursor-pointer border-slate-800/70 hover:bg-slate-800/60 ${
+                        idx % 2 === 1 ? "bg-slate-950/40" : ""
+                      }`}
                     >
                       <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400">
                         {fmtTime(p.ts)}
