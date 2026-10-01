@@ -232,3 +232,31 @@ Unresolved / next:
 - Идея: «Заморозка» аналитики (донат/топы) при паузе сейчас продолжает жить — можно снапшотить
 - Идея: тёмная/светлая тема — компоненты по-прежнему под dark
 - Идея: экспорт «только отфильтрованное» из таблицы (сейчас экспорт всегда весь буфер)
+
+---
+Task ID: cron-review-20261002-0500
+Agent: main (Z.ai Code)
+Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи бэклога (экспорт отфильтрованного, заморозка аналитики, JSON-копия пакета) + фикс мобильных KPI
+
+Work Log:
+- Статус-ассессмент: worklog прочитан; dev.log чист (200s, SSE живые, Prisma пишет алерты); lint 0; curl stats/scenario/integration OK
+- QA agent-browser: все 4 вкладки, консоль без ошибок; десктоп 1280 (set viewport) и мобайл 390 (set viewport — нативная команда agent-browser, CDP-скрипт больше не нужен). Фаза стабильная → решено развивать бэклог
+- Feature A — Экспорт «только отфильтрованного» (бэклог):
+  * новый общий модуль src/lib/sniffer/packet-filter.ts: PacketFilterParams, packetFilterFromSearchParams, hasActiveFilter, filterPackets — единая семантика фильтра для таблицы и экспорта (включая search по summary/method/methodType/cmdType/client/protocol/portName)
+  * /api/sniffer/packets переведён на общий фильтр (поведение идентичное, deep-scan client/port сохранён — проверено curl)
+  * /api/sniffer/export: при наличии search/protocol/direction/minSize/maxSize — фильтрованный срез буфера; имя файла traffic_filtered_<ts>.jsonl / sniffer_report_filtered_<ts>.csv; CSV-шапка «отфильтрованный срез буфера» + строка «Условия;…»
+  * UI: в меню «Экспорт» при активных фильтрах появляется секция «по текущему фильтру» (Filter-иконка, emerald) с filtered.jsonl (живой счётчик «N пак.») и filtered.csv; разделитель role=separator
+- Feature B — Заморозка аналитики на паузе (бэклог): снапшот stats → frozenStats при паузе; карточка «Аналитика трафика» и чипы каналов рендерятся от visibleStats; амбер-бейдж «снимок на паузе» + амбер-бордер + подпись «зафиксировано на момент паузы»; сброс в handlePause/jumpToFresh; тост паузы упоминает фиксацию аналитики. График и KPI остаются живыми (приём в фоне)
+- Fix C — мобильная обрезка KPI (найдено на QA 390px: «22.2 т…», «331.6…»): StatCard icon size-9 sm:size-11, value text-base sm:text-lg + tracking-tight, паддинг p-3 sm:p-4, label text-[11px] sm:text-xs; ховер-подъём hover:-translate-y-0.5 + цветная hover-тень
+- Feature D — копия полей пакета как JSON в PacketDetailSheet: кнопка «JSON» (FileJson) над таблицей полей, packetJson useMemo без hexPreview, feedback «скопировано» 1.5с
+- Проверено в браузере: фильтр THRIFT → секция фильтр-экспорта (79 пак.), curl csv/jsonl с условиями (1389/132 строк против 4999 всего); пауза → донат замер (23.3k в двух скриншотах через 5с), топы идентичны, пилюля 53→81 и uptime растут; JSON-кнопка в листе; мобайл 390 — значения KPI полностью видны
+- lint: 0; tsc: чисто; dev.log без ошибок; консоль браузера чистая
+
+Stage Summary:
+- Файлы: +src/lib/sniffer/packet-filter.ts; изменены packets/route.ts (рефактор на общий фильтр), export/route.ts (+фильтрованный срез, +Условия в CSV, filtered_ инфикс), sniffer-tab.tsx (frozenStats/visibleStats, бейдж снимка, секция фильтр-экспорта, StatCard responsive+hover, JSON-копия, Filter-иконка)
+- Архитектурное знание: agent-browser set viewport W H — нативная замена CDP-эмуляции для мобильных проверок; общий packet-filter исключает расползание семантики фильтра между таблицей и экспортом
+
+Unresolved / next:
+- Идея: «сравнить срезы» — диф двух снапшотов аналитики (до/после сценария)
+- Идея: счётчик экспортируемых строк в глобальных пунктах меню (нужен лёгкий HEAD-подсчёт)
+- Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора

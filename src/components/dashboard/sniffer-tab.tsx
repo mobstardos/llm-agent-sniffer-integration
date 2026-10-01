@@ -28,6 +28,7 @@ import {
   ChevronDown,
   X,
   ArrowDownToLine,
+  Filter,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,7 @@ import {
   type Packet,
   type Alert,
   type Session,
+  type SnifferStats,
 } from "@/hooks/use-sniffer-stream";
 import { PpsChart, type ChartMetric } from "@/components/dashboard/pps-chart";
 import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
@@ -116,23 +118,25 @@ function StatCard({
 }) {
   return (
     <Card
-      className={`group border-slate-800 bg-slate-900/60 transition-colors duration-200 ${
+      className={`group border-slate-800 bg-slate-900/60 transition-all duration-200 hover:-translate-y-0.5 ${
         alert
-          ? "border-red-500/40 hover:border-red-500/60"
-          : "hover:border-emerald-500/40"
+          ? "border-red-500/40 hover:border-red-500/60 hover:shadow-[0_8px_28px_-14px] hover:shadow-red-500/45"
+          : "hover:border-emerald-500/40 hover:shadow-[0_8px_28px_-14px] hover:shadow-emerald-500/40"
       } ${critPulse ? "shadow-[0_0_24px_-8px] shadow-red-500/50" : ""}`}
     >
-      <CardContent className="flex items-center gap-3 p-4">
+      <CardContent className="flex items-center gap-2.5 p-3 sm:gap-3 sm:p-4">
         <span
-          className={`flex size-11 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105 ${
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg border transition-transform duration-200 group-hover:scale-105 sm:size-11 ${
             alert ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"
           } ${critPulse ? "animate-pulse" : ""}`}
         >
-          <Icon className={`size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
+          <Icon className={`size-4 sm:size-5 ${alert ? "text-red-400" : "text-emerald-400"}`} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-lg font-bold leading-tight text-slate-50 tabular-nums">{value}</div>
-          <div className="truncate text-xs text-slate-400">{label}</div>
+          <div className="truncate text-base font-bold leading-tight tracking-tight text-slate-50 tabular-nums sm:text-lg">
+            {value}
+          </div>
+          <div className="truncate text-[11px] text-slate-400 sm:text-xs">{label}</div>
           {sub && <div className="truncate text-[10px] text-slate-500">{sub}</div>}
         </div>
         {spark && <div className="hidden shrink-0 pl-1 sm:block">{spark}</div>}
@@ -227,6 +231,7 @@ function PacketDetailSheet({
   loading: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [jsonCopied, setJsonCopied] = useState(false);
 
   const rows: [string, string][] = packet
     ? [
@@ -246,6 +251,12 @@ function PacketDetailSheet({
       ]
     : [];
 
+  const packetJson = useMemo(() => {
+    if (!packet) return "";
+    const { hexPreview: _hex, ...rest } = packet;
+    return JSON.stringify(rest, null, 2);
+  }, [packet]);
+
   const hexdumpText = detail?.hexdump ?? packet?.hexPreview ?? "";
 
   const handleCopy = async () => {
@@ -254,6 +265,17 @@ function PacketDetailSheet({
       await navigator.clipboard.writeText(hexdumpText);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard недоступен */
+    }
+  };
+
+  const handleCopyJson = async () => {
+    if (!packetJson) return;
+    try {
+      await navigator.clipboard.writeText(packetJson);
+      setJsonCopied(true);
+      setTimeout(() => setJsonCopied(false), 1500);
     } catch {
       /* clipboard недоступен */
     }
@@ -275,6 +297,21 @@ function PacketDetailSheet({
         </SheetHeader>
         {packet ? (
           <div className="mt-2 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Поля пакета
+              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCopyJson}
+                className="h-7 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-cyan-300"
+                aria-label="Скопировать поля пакета как JSON"
+              >
+                <FileJson className="size-3" aria-hidden />
+                {jsonCopied ? "скопировано" : "JSON"}
+              </Button>
+            </div>
             <div className="rounded-lg border border-slate-800">
               <Table>
                 <TableBody>
@@ -342,6 +379,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [paused, setPaused] = useState(false);
   const [frozenPackets, setFrozenPackets] = useState<Packet[] | null>(null);
   const [frozenTopId, setFrozenTopId] = useState(0);
+  const [frozenStats, setFrozenStats] = useState<SnifferStats | null>(null);
   const [muted, setMuted] = useState(false);
   const [selected, setSelected] = useState<Packet | null>(null);
   const [pendingId, setPendingId] = useState<number | null>(null);
@@ -441,14 +479,16 @@ export function SnifferTab({ live }: SnifferTabProps) {
     if (!paused) {
       setFrozenPackets(packets);
       setFrozenTopId(packets[0]?.id ?? 0);
+      if (stats) setFrozenStats(stats);
       setPaused(true);
       toast.info("Таблица остановлена", {
-        description: "Приём пакетов продолжается в фоне (буфер 3000).",
+        description: "Приём пакетов продолжается в фоне (буфер 3000). Аналитика зафиксирована.",
         duration: 2500,
       });
     } else {
       setFrozenPackets(null);
       setFrozenTopId(0);
+      setFrozenStats(null);
       setPaused(false);
     }
   };
@@ -457,6 +497,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const jumpToFresh = () => {
     setFrozenPackets(null);
     setFrozenTopId(0);
+    setFrozenStats(null);
     setPaused(false);
     tableCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -582,11 +623,12 @@ export function SnifferTab({ live }: SnifferTabProps) {
     return Date.now() - new Date(lastCrit.createdAt).getTime() < 15000;
   }, [alerts]);
 
-  // Чипы быстрого фильтра протоколов (из живой статистики)
+  // Чипы быстрого фильтра протоколов (статистика замораживается на паузе вместе с аналитикой)
+  const visibleStats = paused && frozenStats ? frozenStats : stats;
   const protoChips = useMemo(() => {
-    if (!stats) return [] as [string, number][];
-    return Object.entries(stats.perProtocol).sort((a, b) => b[1] - a[1]);
-  }, [stats]);
+    if (!visibleStats) return [] as [string, number][];
+    return Object.entries(visibleStats.perProtocol).sort((a, b) => b[1] - a[1]);
+  }, [visibleStats]);
 
   // Распределение тревог по правилам — мини-бар в шапке карточки «Тревоги»
   const ruleDist = useMemo(() => {
@@ -610,6 +652,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
     if (minSize) out.push({ key: "min", label: `≥ ${minSize} Б`, clear: () => setMinSize("") });
     if (maxSize) out.push({ key: "max", label: `≤ ${maxSize} Б`, clear: () => setMaxSize("") });
     return out;
+  }, [search, protocol, direction, minSize, maxSize]);
+
+  // QS экспорта «только отфильтрованного» — те же условия, что у таблицы
+  const filterQuery = useMemo(() => {
+    const sp = new URLSearchParams();
+    if (search.trim()) sp.set("search", search.trim());
+    if (protocol !== "all") sp.set("protocol", protocol);
+    if (direction !== "all") sp.set("direction", direction);
+    if (minSize) sp.set("minSize", minSize);
+    if (maxSize) sp.set("maxSize", maxSize);
+    return sp.toString();
   }, [search, protocol, direction, minSize, maxSize]);
 
   const onRowClick = (p: Packet) => {
@@ -771,18 +824,32 @@ export function SnifferTab({ live }: SnifferTabProps) {
         </CardContent>
       </Card>
 
-      {/* Распределение протоколов + топы */}
-      {stats && (
-        <Card className="border-slate-800 bg-slate-900/60">
-          <CardHeader className="p-4 pb-3">
-            <CardTitle className="text-sm text-slate-200">Аналитика трафика</CardTitle>
+      {/* Распределение протоколов + топы (аналитика замирает на паузе) */}
+      {visibleStats && (
+        <Card
+          className={`border-slate-800 bg-slate-900/60 transition-colors ${
+            paused ? "border-amber-500/30" : ""
+          }`}
+        >
+          <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+              Аналитика трафика
+              {paused && (
+                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
+                  снимок на паузе
+                </Badge>
+              )}
+            </CardTitle>
+            <span className="text-[11px] text-slate-500">
+              {paused ? "зафиксировано на момент паузы" : "живые счётчики буфера"}
+            </span>
           </CardHeader>
           <CardContent className="p-4 pt-0">
             <ProtocolBreakdown
-              perProtocol={stats.perProtocol}
-              totalPackets={stats.totalPackets}
-              topMethods={stats.topMethods}
-              topClients={stats.topClients}
+              perProtocol={visibleStats.perProtocol}
+              totalPackets={visibleStats.totalPackets}
+              topMethods={visibleStats.topMethods}
+              topClients={visibleStats.topClients}
             />
           </CardContent>
         </Card>
@@ -1011,6 +1078,39 @@ export function SnifferTab({ live }: SnifferTabProps) {
                   alerts.jsonl — журнал тревог
                 </a>
               </DropdownMenuItem>
+              {filterQuery && (
+                <>
+                  <div
+                    role="separator"
+                    aria-orientation="horizontal"
+                    className="my-1 h-px bg-slate-800"
+                  />
+                  <DropdownMenuLabel className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-emerald-400/80">
+                    <Filter className="size-3" aria-hidden />
+                    по текущему фильтру
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem asChild>
+                    <a
+                      href={`/api/sniffer/export?format=jsonl&${filterQuery}`}
+                      download
+                      className="cursor-pointer"
+                    >
+                      <FileJson className="mr-2 size-3.5 text-emerald-300" aria-hidden />
+                      filtered.jsonl — {fmtCompact(filtered.length)} пак.
+                    </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a
+                      href={`/api/sniffer/export?format=csv&${filterQuery}`}
+                      download
+                      className="cursor-pointer"
+                    >
+                      <FileSpreadsheet className="mr-2 size-3.5 text-emerald-300" aria-hidden />
+                      filtered.csv — срез буфера
+                    </a>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>

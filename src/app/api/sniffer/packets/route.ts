@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRecentPackets } from "@/lib/sniffer/hub";
+import { filterPackets, packetFilterFromSearchParams } from "@/lib/sniffer/packet-filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,30 +14,13 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const limit = Math.min(Math.max(parseInt(sp.get("limit") ?? "200", 10) || 200, 1), 1000);
-  const search = (sp.get("search") ?? "").trim().toLowerCase();
-  const protocol = sp.get("protocol") ?? "";
-  const direction = sp.get("direction") ?? "";
-  const minSize = parseInt(sp.get("minSize") ?? "", 10);
-  const maxSize = parseInt(sp.get("maxSize") ?? "", 10);
   const client = (sp.get("client") ?? "").trim();
   const port = (sp.get("port") ?? "").trim();
 
   // для инспектора сессий расширяем выборку до всего буфера
   const deepScan = Boolean(client || port);
   const all = getRecentPackets(deepScan ? 5000 : 1000);
-  const filtered = all.filter((p) => {
-    if (protocol && p.protocol !== protocol) return false;
-    if (direction && p.direction !== direction) return false;
-    if (!Number.isNaN(minSize) && p.size < minSize) return false;
-    if (!Number.isNaN(maxSize) && p.size > maxSize) return false;
-    if (client && p.client !== client) return false;
-    if (port && p.portName !== port) return false;
-    if (search) {
-      const hay = `${p.summary} ${p.method ?? ""} ${p.methodType ?? ""} ${p.client} ${p.protocol} ${p.portName}`.toLowerCase();
-      if (!hay.includes(search)) return false;
-    }
-    return true;
-  });
+  const filtered = filterPackets(all, packetFilterFromSearchParams(sp));
 
   return NextResponse.json({
     packets: filtered.slice(0, limit),

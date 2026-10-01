@@ -6,6 +6,12 @@ import {
   getSessions,
   getStats,
 } from "@/lib/sniffer/hub";
+import {
+  filterPackets,
+  hasActiveFilter,
+  packetFilterFromSearchParams,
+  type PacketFilterParams,
+} from "@/lib/sniffer/packet-filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +19,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/sniffer/export?format=jsonl|csv|sessions|alerts&limit=N
  *                        [&client=ip:port] [&port=ChannelName] — экспорт одной сессии
+ *                        [&search=&protocol=&direction=&minSize=&maxSize=] — экспорт «только отфильтрованного»
  *
  * Экспорт кольцевого буфера — аналог экспорта реального UniversalSniffer:
  *  - jsonl  → capture/traffic.jsonl (по строке JSON на пакет)
@@ -20,6 +27,7 @@ export const dynamic = "force-dynamic";
  *  - alerts → capture/alerts.jsonl (журнал тревог)
  *  - sessions → capture/reports/sessions.csv
  *  При наличии client/port — срез одной сессии (jsonl/csv).
+ *  При наличии поисковых условий — фильтрованный срез буфера (jsonl/csv).
  */
 
 const EXPORT_CAP = 5000;
@@ -64,8 +72,10 @@ function stamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function packetJsonl(filter?: SessionFilter): string {
-  const packets = getRecentPackets(EXPORT_CAP).filter((p) => matchesFilter(p, filter)); // новые первыми — как в traffic.jsonl
+function packetJsonl(filter?: SessionFilter, extra?: PacketFilterParams): string {
+  let packets = getRecentPackets(EXPORT_CAP);
+  if (extra && hasActiveFilter(extra)) packets = filterPackets(packets, extra); // фильтр таблицы
+  packets = packets.filter((p) => matchesFilter(p, filter)); // новые первыми — как в traffic.jsonl
   return packets
     .map((p) =>
       JSON.stringify({
@@ -182,18 +192,34 @@ function sessionsCsv(): string {
   return lines.join("\n");
 }
 
-/** Срез одной сессии: сводка + пакеты (новые первыми). */
-function sessionCsv(filter: SessionFilter): string {
-  const packets = getRecentPackets(EXPORT_CAP).filter((p) => matchesFilter(p, filter));
+/** Срез одной сессии или отфильтрованный срез: сводка + пакеты (новые первыми). */
+function sessionCsv(filter: SessionFilter, extra?: PacketFilterParams): string {
+  let packets = getRecentPackets(EXPORT_CAP);
+  if (extra && hasActiveFilter(extra)) packets = filterPackets(packets, extra);
+  packets = packets.filter((p) => matchesFilter(p, filter));
   const lines: string[] = [];
   const tx = packets.filter((p) => p.direction === "TX");
   const rx = packets.filter((p) => p.direction === "RX");
   const bytes = packets.reduce((acc, p) => acc + p.size, 0);
+  const isSession = Boolean(filter.client || filter.port);
+  const conditions: string[] = [];
+  if (filter.client) conditions.push(`клиент ${filter.client}`);
+  if (filter.port) conditions.push(`канал ${filter.port}`);
+  if (extra?.search?.trim()) conditions.push(`поиск «${extra.search.trim()}»`);
+  if (extra?.protocol?.trim() && extra.protocol !== "all") conditions.push(`протокол ${extra.protocol}`);
+  if (extra?.direction?.trim() && extra.direction !== "all") conditions.push(`направление ${extra.direction}`);
+  if (extra?.minSize?.trim()) conditions.push(`≥ ${extra.minSize} Б`);
+  if (extra?.maxSize?.trim()) conditions.push(`≤ ${extra.maxSize} Б`);
 
-  lines.push("Universal Sniffer — экспорт сессии (демо-панель)");
+  lines.push(
+    isSession
+      ? "Universal Sniffer — экспорт сессии (демо-панель)"
+      : "Universal Sniffer — отфильтрованный срез буфера (демо-панель)"
+  );
   lines.push(`Сформирован;${new Date().toLocaleString("ru-RU")}`);
   lines.push(`Клиент;${csvEscape(filter.client ?? "все")}`);
   lines.push(`Канал;${csvEscape(filter.port ?? "все")}`);
+  if (conditions.length > 0) lines.push(`Условия;${csvEscape(conditions.join("; "))}`);
   lines.push(`Пакетов в буфере;${packets.length}`);
   lines.push(`TX;${tx.length};RX;${rx.length}`);
   lines.push(`Суммарный объём;${bytes}`);
@@ -224,14 +250,18 @@ export async function GET(req: NextRequest) {
   const filter: SessionFilter | undefined = hasSessionFilter
     ? { client: client || undefined, port: port || undefined }
     : undefined;
+  // «только отфильтрованное» — те же условия, что в таблице пакетов
+  const extra = packetFilterFromSearchParams(req.nextUrl.searchParams);
+  const filtered = hasActiveFilter(extra);
   const ts = stamp();
+  const filterInfix = filtered ? "filtered_" : "";
 
   switch (format) {
     case "jsonl": {
       const filename = hasSessionFilter
         ? `session_${slug(client ?? "")}${port ? `_${slug(port)}` : ""}_${ts}.jsonl`
-        : `traffic_${ts}.jsonl`;
-      return new NextResponse(packetJsonl(filter), {
+        : `traffic_${filterInfix}${ts}.jsonl`;
+      return new NextResponse(packetJsonl(filter, extra), {
         headers: {
           "Content-Type": "application/x-ndjson; charset=utf-8",
           "Content-Disposition": `attachment; filename="${filename}"`,
@@ -242,8 +272,8 @@ export async function GET(req: NextRequest) {
     case "csv": {
       const filename = hasSessionFilter
         ? `session_${slug(client ?? "")}${port ? `_${slug(port)}` : ""}_${ts}.csv`
-        : `sniffer_report_${ts}.csv`;
-      const body = hasSessionFilter ? sessionCsv(filter!) : reportCsv();
+        : `sniffer_report_${filterInfix}${ts}.csv`;
+      const body = hasSessionFilter || filtered ? sessionCsv(filter ?? {}, extra) : reportCsv();
       return new NextResponse("\uFEFF" + body, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
