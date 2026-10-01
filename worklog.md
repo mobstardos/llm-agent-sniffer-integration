@@ -367,3 +367,41 @@ Unresolved / next:
 - Идея: экспорт «Сравнение срезов» в csv/jsonl (кнопка в SnapshotDiff)
 - Идея: тумблер «показывать тренды» в шапке (если бейджи покажутся шумными)
 - Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора
+
+---
+Task ID: cron-review-20261002-0217
+Agent: main (Z.ai Code)
+Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи (экспорт дифа срезов, тумблер трендов, сортировка таблицы) + полировка стилей
+
+Work Log:
+- Статус-ассессмент: worklog прочитан; dev.log чист (SSE 200, Prisma пишет алерты, компиляции без ошибок; EADDRINUSE в логе — исторический шум старта); lint 0; curl stats/packets/alerts/series/integration/export — все 200 (32.9 тыс. пакетов, 211 тревога, 135 сессий)
+- QA agent-browser: свежая сессия, вкладки хоткеями, консоль чистая, десктоп 1280 + мобайл 390 → фаза стабильная, решено закрывать бэклог (2 пункта) + 1 новая фича
+- Feature A — Экспорт «Сравнения срезов» CSV/JSONL (бэклог):
+  * downloadText(): Blob + a[download] на клиенте — срезы живут только в памяти UI, серверу нечего отдавать
+  * SnapshotDiff: две иконки в шапке справа от X (FileSpreadsheet CSV / FileJson JSONL, violet-hover, focus-ring, разделитель-«|»)
+  * CSV — Excel-формат («;», BOM \uFEFF): заголовок+длительность, строки срезов A/B (ts, пакетов, байт), дельта-строка (пакетов, пак/с, байт, тревог, невалидных), секция «Протокол;Рост пакетов»
+  * JSONL: {type:"meta", a, b, durationSec} → {type:"delta", packets, pps, bytes, alerts, invalid} → {type:"protocol", protocol, delta}
+  * имена snapshot_diff_<HHMMSS>.csv/.jsonl; тост-подтверждение с числами дифа
+- Feature B — Тумблер трендов (бэклог):
+  * showTrends (default true) + localStorage "sniffer.showTrends" (восстановление после гидрации, try/catch приватный режим)
+  * кнопка TrendingUp в шапке графика рядом с паузой (amber когда вкл, slate-600 выкл, aria-pressed, тултипы «если шумят»)
+  * StatCard получает trend={showTrends ? ppsTrend : undefined} — бейджи ▲▼ исчезают/появляются
+- Feature C — Сортировка таблицы пакетов (новая):
+  * type SortKey = "ts" | "size"; state sort {key, dir} | null; cycleSort: клик = desc → asc → сброс к порядку потока
+  * sorted-memo поверх filtered ([...filtered].sort, ts по getTime, size численно; desc — reverse); display = sorted.slice(0, visibleCount)
+  * заголовки «Время»/«Размер» — кнопки с иконками ArrowUpDown (неактивный, opacity-40) / ArrowDown / ArrowUp (emerald-300 активный, hover-emerald, focus-ring); aria-sort="ascending|descending|none" на th
+  * чип «сортировка: размер ↓» в CardTitle с X-сбросом (emerald-чип, animate-in); сброс пагинации при смене сортировки
+- Стили: консистентность заголовков (без uppercase — как соседние ячейки; font-mono только там, где был); чип сортировки в общем языке emerald-чипов фильтров; export-кнопки дифа в violet-системе панели
+- e2e в браузере: сортировка размер desc → 1.33 МБ сверху, asc → 135 Б, сброс → порядок потока + aria-sort="none"; тумблер трендов → бейджи исчезли, localStorage "0" → вернулись, "1"; два среза по S → диф → CSV-экспорт с тостом «5 пакетов за 1 с, протоколов: 2», JSONL без ошибок консоли
+- lint: 0; tsc: чисто; dev.log без ошибок; консоль браузера чистая (десктоп и мобайл 390)
+
+Stage Summary:
+- Бэклог из cron-review-20261002-0800 закрыт полностью (экспорт дифа + тумблер трендов) + добавлена сортировка таблицы
+- Файлы: изменён только sniffer-tab.tsx (+downloadText, +SortKey/cycleSort/sorted, +showTrends/toggleTrends с localStorage, +SnapshotDiff.exportDiff с CSV/JSONL, сортируемые заголовки, чип сортировки, тумблер в шапке графика)
+- Архитектурное знание: клиентский Blob-экспорт — правильный путь для эфемерного UI-состояния (срезы не серверные); cycleSort desc→asc→null даёт «естественный порядок потока» третьим кликом; MultiEdit с частичным old_str-якорем опасен (рвал функции toggleChartPause/downloadText — чинено, вывод: якорь должен включать всю конструкцию)
+- QA-метод: aria-sort + title-тултипы проверялись eval'ом; тосты sonner как маркер срабатывания обработчиков; download в headless не сохраняется — проверял тост+отсутствие ошибок
+
+Unresolved / next:
+- Идея: сортировка ещё и по колонке «Канал»/«Протокол» (если попросится)
+- Идея: экспорт дифа сценариев (ScenarioResults) тем же downloadText — унификация
+- Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора

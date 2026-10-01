@@ -36,6 +36,9 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,6 +99,22 @@ import {
 } from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
+
+/** Ключи сортировки таблицы пакетов (по клику на заголовок). */
+type SortKey = "ts" | "size";
+
+/** Скачивание текстового файла, сгенерированного на клиенте (диф срезов живёт только в памяти UI). */
+function downloadText(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 /** Лёгкий ответ counts=1 — счётчики строк для меню экспорта. */
 interface ExportCounts {
@@ -326,6 +345,35 @@ function SnapshotDiff({ a, b, onClear }: { a: Snapshot; b: Snapshot; onClear: ()
   }, [a, b]);
   const protoTotal = diff.perProtocol.reduce((acc, [, n]) => acc + n, 0);
   const pps = Math.round((diff.packets / diff.durationSec) * 10) / 10;
+
+  // Экспорт сравнения: файл генерируется на клиенте — срезы существуют только в UI
+  const exportDiff = (format: "csv" | "jsonl") => {
+    const stamp = fmtClock(b.ts).replace(/:/g, "");
+    if (format === "csv") {
+      // Excel-CSV («;», BOM) — как серверные csv-экспорты
+      const rows: string[] = [
+        ["Сравнение срезов аналитики", `A → B`, `длительность ${diff.durationSec} с`].join(";"),
+        ["Срез A", a.ts, "пакетов", a.totalPackets, "байт", a.totalBytes].join(";"),
+        ["Срез B", b.ts, "пакетов", b.totalPackets, "байт", b.totalBytes].join(";"),
+        ["Дельта", "пакетов", diff.packets, "пак/с", pps, "байт", diff.bytes, "тревог", diff.alerts, "невалидных", diff.invalid].join(";"),
+        "",
+        "Протокол;Рост пакетов",
+        ...diff.perProtocol.map(([proto, n]) => `${proto};+${n}`),
+      ];
+      downloadText(`\uFEFF${rows.join("\n")}\n`, `snapshot_diff_${stamp}.csv`, "text/csv;charset=utf-8");
+    } else {
+      const lines = [
+        JSON.stringify({ type: "meta", a: a.ts, b: b.ts, durationSec: diff.durationSec }),
+        JSON.stringify({ type: "delta", packets: diff.packets, pps, bytes: diff.bytes, alerts: diff.alerts, invalid: diff.invalid }),
+        ...diff.perProtocol.map(([proto, n]) => JSON.stringify({ type: "protocol", protocol: proto, delta: n })),
+      ];
+      downloadText(`${lines.join("\n")}\n`, `snapshot_diff_${stamp}.jsonl`, "application/jsonl");
+    }
+    toast.success(`Сравнение срезов выгружено — ${format.toUpperCase()}`, {
+      description: `${fmtCompact(diff.packets)} пакетов за ${diff.durationSec} с, протоколов: ${diff.perProtocol.length}.`,
+      duration: 2500,
+    });
+  };
   return (
     <div
       role="status"
@@ -343,15 +391,36 @@ function SnapshotDiff({ a, b, onClear }: { a: Snapshot; b: Snapshot; onClear: ()
             {fmtUptime(diff.durationSec)}
           </Badge>
         </span>
-        <button
-          type="button"
-          onClick={onClear}
-          aria-label="Сбросить сравнение срезов"
-          title="Сбросить срезы"
-          className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
-        >
-          <X className="size-3.5" aria-hidden />
-        </button>
+        <span className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => exportDiff("csv")}
+            aria-label="Экспорт сравнения срезов в CSV"
+            title="Экспорт сравнения в CSV (Excel) — «;», сводка + протоколы"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-violet-500/10 hover:text-violet-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-400"
+          >
+            <FileSpreadsheet className="size-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => exportDiff("jsonl")}
+            aria-label="Экспорт сравнения срезов в JSONL"
+            title="Экспорт сравнения в JSONL — meta, дельты, протоколы"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-violet-500/10 hover:text-violet-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-400"
+          >
+            <FileJson className="size-3.5" aria-hidden />
+          </button>
+          <span aria-hidden className="mx-0.5 h-4 w-px bg-slate-700" />
+          <button
+            type="button"
+            onClick={onClear}
+            aria-label="Сбросить сравнение срезов"
+            title="Сбросить срезы"
+            className="flex size-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </span>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
         <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
@@ -593,6 +662,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [inspectorRaw, setInspectorRaw] = useState<Session | null>(null);
   const [inspectorId, setInspectorId] = useState<string | null>(null);
   const [soundOn, setSoundOn] = useState(false);
+  const [showTrends, setShowTrends] = useState(true);
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
   const [journalOpen, setJournalOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MAX_TABLE_ROWS);
   const [exportCounts, setExportCounts] = useState<ExportCounts | null>(null);
@@ -631,10 +702,10 @@ export function SnifferTab({ live }: SnifferTabProps) {
     }
   }, [alerts, soundOn]);
 
-  // Сброс пагинации при смене фильтров
+  // Сброс пагинации при смене фильтров и сортировки
   useEffect(() => {
     setVisibleCount(MAX_TABLE_ROWS);
-  }, [search, protocol, direction, minSize, maxSize]);
+  }, [search, protocol, direction, minSize, maxSize, sort]);
 
   // Тикаем часы для обратного отсчёта сценария
   useEffect(() => {
@@ -642,6 +713,16 @@ export function SnifferTab({ live }: SnifferTabProps) {
     const timer = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [scenario]);
+
+  // Восстановление тумблера трендов из прошлой сессии (после гидрации)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("sniffer.showTrends");
+      if (v !== null) setShowTrends(v === "1");
+    } catch {
+      /* приватный режим — тренды просто остаются включёнными */
+    }
+  }, []);
 
   const scenarioRemaining = useMemo(() => {
     if (!scenario) return 0;
@@ -720,6 +801,23 @@ export function SnifferTab({ live }: SnifferTabProps) {
       setChartPaused(false);
     }
   };
+
+  // Тумблер трендов на KPI-карточках — выбор сохраняется между сессиями
+  const toggleTrends = () => {
+    setShowTrends((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("sniffer.showTrends", next ? "1" : "0");
+      } catch {
+        /* приватный режим */
+      }
+      return next;
+    });
+  };
+
+  // Сортировка таблицы: клик по заголовку — desc → asc → сброс к порядку потока
+  const cycleSort = (key: SortKey) =>
+    setSort((s) => (!s || s.key !== key ? { key, dir: "desc" } : s.dir === "desc" ? { key, dir: "asc" } : null));
 
   // Ручной срез аналитики для сравнения A → B (кнопка или хоткей S)
   const takeSnapshot = () => {
@@ -840,7 +938,6 @@ export function SnifferTab({ live }: SnifferTabProps) {
 
   // Видимый ряд графика: замораживается независимо от таблицы
   const chartSeries = chartPaused && frozenSeries ? frozenSeries : series;
-
   const filtered = useMemo(() => {
     const source = paused && frozenPackets ? frozenPackets : packets;
     const s = search.trim().toLowerCase();
@@ -859,6 +956,19 @@ export function SnifferTab({ live }: SnifferTabProps) {
     });
   }, [packets, frozenPackets, paused, search, protocol, direction, minSize, maxSize]);
 
+  // Сортировка по клику на заголовок (по умолчанию — порядок потока, свежие сверху)
+  const sorted = useMemo(() => {
+    if (!sort) return filtered;
+    const arr = [...filtered];
+    arr.sort((x, y) =>
+      sort.key === "size"
+        ? x.size - y.size
+        : new Date(x.ts).getTime() - new Date(y.ts).getTime()
+    );
+    if (sort.dir === "desc") arr.reverse();
+    return arr;
+  }, [filtered, sort]);
+
   // Новые пакеты, пришедшие в фоне, пока таблица на паузе
   const newWhilePaused = useMemo(() => {
     if (!paused) return 0;
@@ -869,7 +979,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
     return n;
   }, [paused, packets, frozenTopId]);
 
-  const display = filtered.slice(0, visibleCount);
+  const display = sorted.slice(0, visibleCount);
   const latestAlerts = alerts.slice(0, 50);
   const sessionList = sessions.slice(0, 12);
 
@@ -966,7 +1076,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
           value={stats ? fmtCompact(stats.totalPackets) : "—"}
           sub={stats ? `${stats.lastPps} п/с · ${stats.invalidPackets} невалидных` : undefined}
           spark={<Sparkline data={series.map((s) => s.pps)} stroke="#10b981" />}
-          trend={ppsTrend}
+          trend={showTrends ? ppsTrend : undefined}
         />
         <StatCard
           icon={HardDrive}
@@ -974,7 +1084,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
           value={stats ? fmtBytes(stats.totalBytes) : "—"}
           sub={stats ? fmtRate(stats.lastBps) : undefined}
           spark={<Sparkline data={series.map((s) => s.bps)} stroke="#22d3ee" />}
-          trend={bpsTrend}
+          trend={showTrends ? bpsTrend : undefined}
         />
         <StatCard
           icon={Network}
@@ -1104,6 +1214,25 @@ export function SnifferTab({ live }: SnifferTabProps) {
                 }`}
               >
                 {chartPaused ? <Play className="size-4" aria-hidden /> : <Pause className="size-4" aria-hidden />}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={toggleTrends}
+                aria-pressed={showTrends}
+                aria-label={showTrends ? "Скрыть бейджи трендов на KPI-карточках" : "Показать бейджи трендов на KPI-карточках"}
+                title={
+                  showTrends
+                    ? "Бейджи трендов ▲▼ на KPI-карточках: вкл — скрыть, если шумят"
+                    : "Бейджи трендов ▲▼ на KPI-карточках: выкл — включить"
+                }
+                className={`h-8 w-8 p-0 ${
+                  showTrends
+                    ? "text-amber-400/90 hover:bg-amber-500/10 hover:text-amber-300"
+                    : "text-slate-600 hover:bg-slate-800 hover:text-slate-300"
+                }`}
+              >
+                <TrendingUp className="size-4" aria-hidden />
               </Button>
               <ToggleGroup
                 type="single"
@@ -1398,6 +1527,20 @@ export function SnifferTab({ live }: SnifferTabProps) {
                 показаны {display.length} из {fmtCompact(filtered.length)}
               </span>
             )}
+            {sort && (
+              <span className="inline-flex animate-in items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 py-0.5 pl-2 pr-1 font-mono text-[10px] text-emerald-300 fade-in duration-300">
+                сортировка: {sort.key === "size" ? "размер" : "время"} {sort.dir === "desc" ? "↓" : "↑"}
+                <button
+                  type="button"
+                  onClick={() => setSort(null)}
+                  aria-label="Сбросить сортировку таблицы"
+                  title="Вернуть порядок потока (свежие сверху)"
+                  className="flex size-4 items-center justify-center rounded-full hover:bg-emerald-500/25"
+                >
+                  <X className="size-2.5" aria-hidden />
+                </button>
+              </span>
+            )}
           </CardTitle>
           <DropdownMenu
             onOpenChange={(open) => {
@@ -1529,12 +1672,44 @@ export function SnifferTab({ live }: SnifferTabProps) {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-slate-900 shadow-[0_1px_0_0_theme(colors.slate.800)]">
                 <TableRow className="border-slate-800 hover:bg-transparent">
-                  <TableHead className="pl-4 font-mono text-[11px] text-slate-500">Время</TableHead>
+                  <TableHead aria-sort={sort?.key === "ts" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className="pl-4">
+                    <button
+                      type="button"
+                      onClick={() => cycleSort("ts")}
+                      title="Сортировка по времени: свежие → старые → старые → свежие → порядок потока"
+                      className={`inline-flex items-center gap-1 rounded font-mono text-[11px] transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
+                        sort?.key === "ts" ? "text-emerald-300" : "text-slate-500"
+                      }`}
+                    >
+                      Время
+                      {sort?.key === "ts" ? (
+                        sort.dir === "desc" ? <ArrowDown className="size-3" aria-hidden /> : <ArrowUp className="size-3" aria-hidden />
+                      ) : (
+                        <ArrowUpDown className="size-3 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  </TableHead>
                   <TableHead className="text-[11px] text-slate-500">↕</TableHead>
                   <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
                   <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
                   <TableHead className="text-[11px] text-slate-500">Тип / метод</TableHead>
-                  <TableHead className="text-right text-[11px] text-slate-500">Размер</TableHead>
+                  <TableHead aria-sort={sort?.key === "size" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => cycleSort("size")}
+                      title="Сортировка по размеру: крупные → мелкие → мелкие → крупные → порядок потока"
+                      className={`inline-flex items-center gap-1 rounded text-[11px] transition-colors hover:text-emerald-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400 ${
+                        sort?.key === "size" ? "text-emerald-300" : "text-slate-500"
+                      }`}
+                    >
+                      Размер
+                      {sort?.key === "size" ? (
+                        sort.dir === "desc" ? <ArrowDown className="size-3" aria-hidden /> : <ArrowUp className="size-3" aria-hidden />
+                      ) : (
+                        <ArrowUpDown className="size-3 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  </TableHead>
                   <TableHead className="text-[11px] text-slate-500">Валид</TableHead>
                   <TableHead className="pr-4 text-[11px] text-slate-500">Резюме</TableHead>
                 </TableRow>
