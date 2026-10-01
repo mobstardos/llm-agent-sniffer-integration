@@ -30,6 +30,7 @@ import {
   ArrowDownToLine,
   Filter,
   Database,
+  GitCompareArrows,
   CheckCircle2 as ScenarioDone,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -89,6 +90,15 @@ import {
 } from "@/lib/format";
 
 const MAX_TABLE_ROWS = 200;
+
+/** Лёгкий ответ counts=1 — счётчики строк для меню экспорта. */
+interface ExportCounts {
+  packets: number;
+  filtered: number | null;
+  sessions: number;
+  alerts: number;
+  alertsDb: number | null;
+}
 
 const SCENARIO_CATALOG = [
   { id: "azs_burst", label: "АЗС-всплеск", hint: "x4 пак/с, RemoteServer" },
@@ -216,6 +226,16 @@ function StateBadge({ state }: { state: string }) {
     <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${map[state] ?? map.closed}`}>
       {label[state] ?? state}
     </Badge>
+  );
+}
+
+/** Счётчик строк в пункте меню экспорта (появляется после лёгкого counts-запроса). */
+function ExportCount({ n }: { n: number | null | undefined }) {
+  if (n == null) return null;
+  return (
+    <span className="ml-auto animate-in pl-3 font-mono text-[10px] text-slate-500 tabular-nums fade-in duration-300">
+      {fmtCompact(n)}
+    </span>
   );
 }
 
@@ -398,6 +418,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [soundOn, setSoundOn] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MAX_TABLE_ROWS);
+  const [exportCounts, setExportCounts] = useState<ExportCounts | null>(null);
+  const exportCountsSeq = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tableCardRef = useRef<HTMLDivElement>(null);
   const alertToastSeenRef = useRef<string | null>(null);
@@ -669,6 +691,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
     if (maxSize) sp.set("maxSize", maxSize);
     return sp.toString();
   }, [search, protocol, direction, minSize, maxSize]);
+
+  // Счётчики строк экспорта — лёгкий counts-запрос при открытии меню (без генерации файлов)
+  const loadExportCounts = () => {
+    const seq = ++exportCountsSeq.current;
+    fetch(`/api/sniffer/export?counts=1${filterQuery ? `&${filterQuery}` : ""}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: ExportCounts) => {
+        if (seq === exportCountsSeq.current) setExportCounts(d);
+      })
+      .catch(() => undefined);
+  };
 
   const onRowClick = (p: Packet) => {
     setSelected(p);
@@ -1048,7 +1081,14 @@ export function SnifferTab({ live }: SnifferTabProps) {
               </span>
             )}
           </CardTitle>
-          <DropdownMenu>
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (open) {
+                setExportCounts(null);
+                loadExportCounts();
+              }
+            }}
+          >
             <DropdownMenuTrigger asChild>
               <Button
                 size="sm"
@@ -1060,31 +1100,40 @@ export function SnifferTab({ live }: SnifferTabProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
-              <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500">
-                как в реальном сниффере
+              <DropdownMenuLabel className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-wide text-slate-500">
+                <span>как в реальном сниффере</span>
+                {exportCounts && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-slate-600">
+                    буфер: {fmtCompact(exportCounts.packets)} пак.
+                  </span>
+                )}
               </DropdownMenuLabel>
               <DropdownMenuItem asChild>
                 <a href="/api/sniffer/export?format=jsonl" download className="cursor-pointer">
                   <FileJson className="mr-2 size-3.5 text-emerald-400" aria-hidden />
                   traffic.jsonl — пакеты
+                  <ExportCount n={exportCounts?.packets} />
                 </a>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href="/api/sniffer/export?format=csv" download className="cursor-pointer">
                   <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
                   отчёт CSV — сводка + пакеты
+                  <ExportCount n={exportCounts?.packets} />
                 </a>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href="/api/sniffer/export?format=sessions" download className="cursor-pointer">
                   <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
                   sessions.csv — сессии
+                  <ExportCount n={exportCounts?.sessions} />
                 </a>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <a href="/api/sniffer/export?format=alerts" download className="cursor-pointer">
                   <FileJson className="mr-2 size-3.5 text-amber-400" aria-hidden />
                   alerts.jsonl — журнал тревог
+                  <ExportCount n={exportCounts?.alerts} />
                 </a>
               </DropdownMenuItem>
               {filterQuery && (
@@ -1105,7 +1154,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       className="cursor-pointer"
                     >
                       <FileJson className="mr-2 size-3.5 text-emerald-300" aria-hidden />
-                      filtered.jsonl — {fmtCompact(filtered.length)} пак.
+                      filtered.jsonl — срез по фильтру
+                      <ExportCount n={exportCounts?.filtered} />
                     </a>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
@@ -1115,7 +1165,8 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       className="cursor-pointer"
                     >
                       <FileSpreadsheet className="mr-2 size-3.5 text-emerald-300" aria-hidden />
-                      filtered.csv — срез буфера
+                      filtered.csv — срез по фильтру
+                      <ExportCount n={exportCounts?.filtered} />
                     </a>
                   </DropdownMenuItem>
                 </>
@@ -1445,7 +1496,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                   {ruleDist.items.map((it) => (
                     <div
                       key={it.rule}
-                      className={it.cls}
+                      className={`${it.cls} transition-[flex-basis] duration-700`}
                       style={{ flexBasis: `${Math.max(2, (it.n / ruleDist.total) * 100)}%` }}
                       title={`${it.rule}: ${it.n}`}
                     />
@@ -1554,9 +1605,16 @@ export function SnifferTab({ live }: SnifferTabProps) {
   );
 }
 
-/** Итоги сценария: дельты счётчиков за окно генерации. Скрытие — локальное состояние, сбрасывается сменой key. */
+/** Итоги сценария: дельты счётчиков за окно генерации + сравнение срезов по протоколам.
+ *  Скрытие — локальное состояние, сбрасывается сменой key. */
 function ScenarioResults({ result }: { result: ScenarioResult }) {
   const [hidden, setHidden] = useState(false);
+  // «Сравнить срезы»: perProtocol на старте → на финише; показываем только выросшие
+  const protoDeltas = useMemo(
+    () => Object.entries(result.perProtocol).sort((a, b) => b[1] - a[1]),
+    [result.perProtocol]
+  );
+  const protoTotal = protoDeltas.reduce((acc, [, n]) => acc + n, 0);
   if (hidden) return null;
   const pps = Math.round((result.packets / result.durationSec) * 10) / 10;
   return (
@@ -1606,6 +1664,42 @@ function ScenarioResults({ result }: { result: ScenarioResult }) {
           </span>
         )}
       </div>
+      {protoDeltas.length > 0 && (
+        <div className="mt-2.5 border-t border-emerald-500/15 pt-2.5">
+          <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <GitCompareArrows className="size-3" aria-hidden />
+            Сравнение срезов по протоколам — срез на старте → срез на финише
+          </p>
+          <div
+            className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800"
+            role="img"
+            aria-label={`Дельты по протоколам за окно сценария: ${protoDeltas
+              .map(([p, n]) => `${p} +${n}`)
+              .join(", ")}`}
+          >
+            {protoDeltas.map(([proto, n]) => (
+              <div
+                key={proto}
+                className={`${protocolDot(proto)} transition-[flex-basis] duration-700`}
+                style={{ flexBasis: `${Math.max(2, (n / protoTotal) * 100)}%` }}
+                title={`${proto}: +${n}`}
+              />
+            ))}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            {protoDeltas.map(([proto, n]) => (
+              <span
+                key={proto}
+                className="inline-flex items-center gap-1.5 font-mono text-[10px] text-slate-300"
+              >
+                <span className={`size-1.5 rounded-full ${protocolDot(proto)}`} aria-hidden />
+                {proto}
+                <span className="font-semibold text-emerald-300 tabular-nums">+{fmtCompact(n)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

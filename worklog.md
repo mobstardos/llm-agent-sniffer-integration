@@ -292,3 +292,38 @@ Unresolved / next:
 - Идея: экспорт журнала тревог из Sheet (csv/jsonl из БД с тем же фильтром severity)
 - Идея: счётчик экспортируемых строк в глобальных пунктах меню экспорта
 - Тема: компоненты по-прежнему захардкожены под dark
+
+---
+Task ID: cron-review-20261002-0700
+Agent: main (Z.ai Code)
+Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи бэклога (сравнение срезов по протоколам, экспорт журнала тревог из БД, счётчики в меню экспорта) + полировка стилей
+
+Work Log:
+- Статус-ассессмент: worklog прочитан; dev.log чист (200s, SSE живые, Prisma пишет алерты); lint 0; curl stats/scenario/alerts OK (26 тыс. пакетов, 159 тревог, БД отвечает)
+- QA agent-browser: все 4 вкладки, консоль без ошибок, десктоп 1280 и мобайл 390 (нативный set viewport) → фаза стабильная, решено закрывать бэклог фичами
+- Feature A — «Сравнить срезы» по протоколам в итогах сценария (бэклог):
+  * use-sniffer-stream: scenarioStartRef хранит снапшот perProtocol на старте; на завершении считаются дельты (только положительные) → ScenarioResult.perProtocol
+  * ScenarioResults: секция «Сравнение срезов по протоколам — срез на старте → срез на финише»: stacked-bar из protocolDot-цветов + легенда «PROTO +N»; useMemo перенесён до early-return (rules-of-hooks); GitCompareArrows-иконка
+  * e2e: thrift_storm (30с) → «+154 пакетов · +1.69 МБ · +6 тревог · 44 невалидных»; срезы: THRIFT +151 · MODBUS +2 · REMOTE_SERVER +1, violet-сегмент доминирует — профиль сценария виден мгновенно
+- Feature B — Экспорт журнала тревог из Sheet (бэклог):
+  * /api/sniffer/export: новые форматы alerts_db (jsonl) и alerts_db_csv (Excel-CSV «;» с шапкой-сводкой CRIT/WARN/INFO) — чтение из Prisma с фильтром severity (take 5000, новые первыми); имена alerts_journal_[sev_]_ts.ext
+  * alerts-journal.tsx: DropdownMenu «Экспорт» в тулбаре журнала (справа от «показано N из M»); пункты с живым счётчиком «N зап.» = data.total текущего фильтра; label «фильтр: crit» при активном уровне; кнопка disabled пока data не загружена
+  * curl: alerts_db&severity=crit → только CRIT-записи; csv-шапка «Записей;175 / CRIT;92;WARN;83;INFO;0»
+- Feature C — Счётчики строк в глобальном меню экспорта (бэклог):
+  * /api/sniffer/export?counts=1 — лёгкий JSON {packets, filtered, sessions, alerts, alertsDb} без генерации файлов (filtered считается по тем же filterPackets+session-условиям)
+  * sniffer-tab: DropdownMenu onOpenChange → сброс + fetch counts (seq-guard против гонок); каждый пункт меню получил правый счётчик (ExportCount: ml-auto, tabular-nums, fade-in); в label — «буфер: N пак.»; filtered.jsonl/csv показывают счётчик отфильтрованного среза
+  * curl: counts=1&protocol=THRIFT&search=getNozzlesState → filtered:136 из packets:5000
+- Стили: циановое радиальное свечение вверху Sheet журнала (консистентно с изумрудным свечением вкладки); severity-рейки слева у записей журнала (red/amber/slate border-l-2) — сканируемость уровней; transition-[flex-basis] duration-700 на сегментах обоих stacked-баров (ruleDist и протокольные дельты) — плавная анимация ширины
+- lint: 0; tsc: чисто по проекту (только pre-existing examples/ и skills/ вне src); dev.log и консоль браузера без ошибок
+
+Stage Summary:
+- Файлы: изменены export/route.ts (+alerts_db/+alerts_db_csv/+counts-режим, +db import), use-sniffer-stream.ts (+perProtocol в снапшоте и ScenarioResult), sniffer-tab.tsx (+ExportCounts/ExportCount/loadExportCounts, счётчики меню, срезы протоколов в ScenarioResults, transitions), alerts-journal.tsx (+DropdownMenu экспорта, +свечение, +severity-рейки)
+- Проверено в браузере: меню экспорта со счётчиками (буфер/сессии/алерты), e2e-сценарий thrift_storm с баром срезов (THRIFT +151), журнал с фильтром crit → экспорт-меню с «99 зап.», мобильный 390px без деградаций
+- Архитектурное знание: counts-запрос дёшев (getRecentPackets уже в памяти) — можно вызывать на каждый open меню; seq-guard через useRef обязателен при async-фetch в меню; при добавлении useMemo в компонент с early-return — хуки строго до return
+- Бэклог из этого раунда закрыт полностью (3 пункта из Unresolved/next предыдущих сессий)
+
+Unresolved / next:
+- Идея: тренд-индикаторы ▲▼ в KPI-карточках (дельта за последнюю минуту из series)
+- Идея: «пауза» графика отдельно от таблицы (сейчас общий paused)
+- Идея: diff двух ручных снапшотов аналитики (кнопка «снять срез» рядом с паузой)
+- Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора

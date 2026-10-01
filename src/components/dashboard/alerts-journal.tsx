@@ -8,9 +8,19 @@ import {
   ChevronDown,
   Inbox,
   ShieldAlert,
+  Download,
+  FileJson,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetContent,
@@ -123,12 +133,20 @@ export function AlertsJournal({
     onOpenPacket(id);
   };
 
+  // Экспорт журнала из БД с тем же фильтром severity, что в тулбаре
+  const severityQs = severity !== "all" ? `&severity=${severity}` : "";
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full max-w-md flex-col border-slate-800 bg-slate-950 p-4 sm:max-w-lg"
+        className="flex w-full max-w-md flex-col overflow-hidden border-slate-800 bg-slate-950 p-4 sm:max-w-lg"
       >
+        {/* Декоративное циановое свечение вверху листа */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(60%_100%_at_50%_0%,rgba(34,211,238,0.08),transparent_70%)]"
+        />
         <SheetHeader className="p-0 pb-2 text-left">
           <SheetTitle className="flex items-center gap-2 text-base text-slate-100">
             <Database className="size-4 text-cyan-400" aria-hidden />
@@ -195,6 +213,61 @@ export function AlertsJournal({
               показано {rows.length} из {data.total}
             </span>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!data}
+                aria-label="Экспорт журнала тревог"
+                title="Экспорт персистентного журнала (SQLite) с текущим фильтром уровней"
+                className="h-8 gap-1.5 border-slate-700 bg-slate-950 px-2 text-[11px] text-slate-300 hover:bg-slate-800 hover:text-cyan-300"
+              >
+                <Download className="size-3.5" aria-hidden />
+                Экспорт
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
+              <DropdownMenuLabel className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-wide text-slate-500">
+                <span>журнал из SQLite</span>
+                {severity !== "all" && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-slate-600">
+                    фильтр: {severity}
+                  </span>
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <a
+                  href={`/api/sniffer/export?format=alerts_db${severityQs}`}
+                  download
+                  className="cursor-pointer"
+                >
+                  <FileJson className="mr-2 size-3.5 text-cyan-400" aria-hidden />
+                  alerts_journal.jsonl
+                  {data && (
+                    <span className="ml-auto pl-3 font-mono text-[10px] text-slate-500 tabular-nums">
+                      {data.total} зап.
+                    </span>
+                  )}
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a
+                  href={`/api/sniffer/export?format=alerts_db_csv${severityQs}`}
+                  download
+                  className="cursor-pointer"
+                >
+                  <FileSpreadsheet className="mr-2 size-3.5 text-cyan-400" aria-hidden />
+                  alerts_journal.csv
+                  {data && (
+                    <span className="ml-auto pl-3 font-mono text-[10px] text-slate-500 tabular-nums">
+                      {data.total} зап.
+                    </span>
+                  )}
+                </a>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Список записей */}
@@ -223,7 +296,13 @@ export function AlertsJournal({
               {rows.map((a, idx) => (
                 <li
                   key={a.id}
-                  className={`py-2.5 transition-colors ${
+                  className={`border-l-2 py-2.5 pl-2.5 pr-2 transition-colors ${
+                    a.severity === "crit"
+                      ? "border-l-red-500/40"
+                      : a.severity === "warn"
+                        ? "border-l-amber-500/40"
+                        : "border-l-slate-700/50"
+                  } ${
                     a.packetId != null
                       ? "cursor-pointer hover:bg-slate-900/70"
                       : ""

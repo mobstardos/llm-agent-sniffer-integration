@@ -1,0 +1,295 @@
+     1→# Worklog — llm-agent + UniversalSniffer Integration
+     2→
+     3→## Project context
+     4→- Main visible deliverable: Next.js 16 dashboard at `/` (integration analysis + live sniffer demo panel, RU language).
+     5→- Real deliverable: patched llm-agent archive with UniversalSniffer integrated as MCP server + agent.
+     6→- Extracted sources for analysis:
+     7→  - `/home/z/my-project/analysis/llm-agent/llm-agent-v2026-10-01/` — LLM multi-agent system (Python, FastAPI, 100 agents, MCP)
+     8→  - `/home/z/my-project/analysis/sniffer-sources/UniversalSniffer-v3.1/` — TCP proxy sniffer (Python stdlib-only, parsers: thrift/remote_server/modbus/json_http/hexdump, web panel :9500 with HTTP API, alerts, exports JSONL/SQLite/PCAP/CSV)
+     9→  - `/home/z/my-project/analysis/repo-mcp-designer-tools/` — comol/mcp_designer_tools: 4 MCP tools for 1C Конструктор (vcexecutecode, vcexecutequery, vcvalidatequery, vcloggetlasterror) + XML dump + config
+    10→  - `/home/z/my-project/analysis/repo-agents/` — alexeyk222/Agents (OpenAgents Control): OAC harness layer, role agents (ContextScout, OpenCoder, TestEngineer, CodeReviewer...), MVI context, analyze→plan→confirm→execute→verify loop
+    11→
+    12→## Analysis conclusions (Task 1, main agent)
+    13→- llm-agent auto-discovers agents (`agents/<id>/agent.yaml`) and MCP (`mcp_servers/<id>/server.yaml`) by directory scan → integration = drop-in directories.
+    14→- UniversalSniffer exposes full HTTP API on :9500 (/api/status, /api/stats, /api/series, /api/sessions, /api/packets, /api/packet/<id>, /api/config, /api/alerts, /api/export/csv, POST /api/reload) → MCP server = HTTP client + lifecycle manager (subprocess).
+    15→- Sniffer is stdlib-only, Python 3.7+ → zero new deps for llm-agent.
+    16→- Sandbox has Python 3.12 at /home/z/.venv/bin/python3.
+    17→
+    18→---
+    19→Task ID: 1
+    20→Agent: main (Z.ai Code)
+    21→Task: Analyze 3 uploaded archives + 2 GitHub repos, design integration
+    22→
+    23→Work Log:
+    24→- Extracted all 3 archives into /home/z/my-project/analysis/
+    25→- Read UniversalSniffer README/config/webserver/engine/parsers registry — mapped full HTTP API and zero-dep architecture
+    26→- Read llm-agent README, loader.py (dir auto-discovery), network agent/server.yaml/server.py patterns, loops format
+    27→- Cloned comol/mcp_designer_tools and alexeyk222/Agents (GitHub API rate-limited; git clone OK), read READMEs
+    28→- Designed integration plan (see Stage Summary)
+    29→
+    30→Stage Summary:
+    31→- Integration design: vendor sniffer into src/sniffer/; MCP server src/mcp_servers/sniffer/server.py (HTTP client to :9500 + subprocess lifecycle + analyze tool); agent agents/sniffer/ (routing: сниффер/трафик/пакеты/tcp/thrift/modbus); mcp_servers/sniffer/server.yaml
+    32→- mcp_designer_tools → new MCP onec_designer_tools (proxy to 1C httpd/Конструктор endpoints) + agent; OAC → declarative loop loops/oac_pipeline.yaml + docs + agent prompt templates (analyze→plan→confirm→execute→verify)
+    33→- Next.js dashboard: 4 tabs (Обзор / Сниффер live-демо на SSE / Интеграция / Репозитории), alerts persisted via Prisma
+    34→
+    35→---
+    36→Task ID: 2-a
+    37→Agent: general-purpose
+    38→Task: Интеграция UniversalSniffer v3.1 в llm-agent (vendor + MCP + агент), 1C Designer Tools MCP, OAC-методология, сборка zip
+    39→
+    40→Work Log:
+    41→- Изучил worklog Task 1, паттерны проекта: agents/network/*, mcp_servers/network/server.yaml, src/mcp_servers/network/server.py, loops/reasoning|verification.yaml, pydantic-схемы (AgentSchema/MCPServerSchema/LoopSpec), mcp_manager (env merge), settings.yaml (стиль ${VAR})
+    42→- Part 1: вендорил сниффер в src/sniffer/ (sniffcore, parsers, webui, config.json, README); __init__.py (__version__ 3.1.0); __main__.py — адаптация sniffer.py (sys.path вставка каталога пакета: сохраняет работу ParserRegistry.load_builtin → importlib "parsers.<mod>" и WEBUI_DIR → src/sniffer/webui, проверено); selftest.py (эхо-сервер + in-process Engine 19000→19001; при занятых портах — эфемерный фолбэк, т.к. в песочнице 19001 занят демо-панелью)
+    43→- Part 2: src/mcp_servers/sniffer/server.py — 16 инструментов (urllib HTTP к SNIFFER_PANEL_URL:9500 через asyncio.to_thread, 5 c таймауты; sniffer_start Popen "python -m src.sniffer" с cwd=PROJECT_ROOT, USNIFF_ROOT=data/sniffer, pid→data/sniffer.pid, лог→data/sniffer-console.log; stop: terminate→5 c→kill; packets-фильтрация и analyze — на стороне MCP; read_capture — whitelist расширений + запрет traversal); mcp_servers/sniffer/server.yaml (danger: external для start/stop/restart/config_get/reload/export_csv); env SNIFFER_PANEL_URL в server.yaml + settings.yaml
+    44→- Part 3: agents/sniffer/ (agent.yaml: priority 17, keywords сниффер/трафик/пакеты/АЗС/RemoteServer…, dangerous_tools start/stop/restart/read_capture, ui 🛰 #10b981; prompt.md: правила status-first/confirm-start/stats→packets→detail/alerts+analyze/hexdump-подсказки по протоколам; user.md как у network)
+    45→- Part 4: src/mcp_servers/onec_designer_tools/ — stdio MCP-прокси 4 инструментов 1С (JSON-RPC 2.0 tools/call на ONEC_MCP_URL, Bearer ONEC_MCP_TOKEN, RU-ошибки с setup-hint) + vc_tools_list; скопированы reference-файлы (tools/ИнструментыДляРазработки.xml, config/httpd.conf|default.vrd|mcpconfig.json) + README.md; server.yaml; agents/onec_designer_tools/ (🧩 #f59e0b, onec)
+    46→- Part 5: loops/oac_pipeline.yaml (kinds только check/llm_call/tool_calls; type: reasoning — т.к. LoopType-enum не содержит "pipeline", отклонение задокументировано в файле и в отчёте); docs/OAC_INTEGRATION.md (маппинг ролей OAC→агенты, MVI, использование конвейера); agents/_templates/oac/{context-bundle-template.md,navigation.md}; agents/oac_orchestrator/ (🎼 #8b5cf6)
+    47→- Part 6: README.md (40 MCP / 39 агентов; +Sniffer в списке инструментов; +onec_designer_tools в 1С-строке), docs/CAPABILITIES.md (Агенты 39, MCP 41, строки про sniffer/onec_designer_tools/oac_orchestrator), docs/SNIFFER_INTEGRATION.md (полная RU-документация: ASCII-архитектура, таблицы файлов и tools↔API, запуск, сценарий АЗС, безопасность, плагины, troubleshooting)
+    48→- Part 7: py_compile всех новых .py OK; yaml.safe_load + pydantic-валидация (AgentSchema/MCPServerSchema/LoopSpec) OK; selftest PASS (8 пакетов HTTP/JSON/RAW, эхо 4/4); smoke MCP stdio 16/16 и 5/5 tools; e2e: sniffer_start→status(stats, list_capture)→блок traversal→sniffer_stop OK; DeclarationLoader: 3 новых агента и 2 MCP загружены (pre-existing YAML-ошибки argocd/cassandra/wandb/… — не мои, не трогал); zip собран
+    49→
+    50→Stage Summary:
+    51→- Созданные файлы: src/sniffer/{__init__,__main__,selftest}.py + sniffcore/(9) + parsers/(6) + webui/(3) + config.json + README.md; src/mcp_servers/sniffer/{__init__.py,server.py}; mcp_servers/sniffer/server.yaml; agents/sniffer/{agent.yaml,prompt.md,user.md}; src/mcp_servers/onec_designer_tools/{__init__.py,server.py,README.md,tools/ИнструментыДляРазработки.xml,config/httpd.conf,config/default.vrd,config/mcpconfig.json}; mcp_servers/onec_designer_tools/server.yaml; agents/onec_designer_tools/{agent.yaml,prompt.md,user.md}; loops/oac_pipeline.yaml; docs/OAC_INTEGRATION.md; docs/SNIFFER_INTEGRATION.md; agents/_templates/oac/{context-bundle-template.md,navigation.md}; agents/oac_orchestrator/{agent.yaml,prompt.md,user.md}
+    52→- Изменённые: README.md, docs/CAPABILITIES.md, config/settings.yaml
+    53→- Артефакты: /home/z/my-project/download/llm-agent-v2026-10-01-sniffer-integration.zip (2.5 МБ, 1508 файлов, без мусора); /home/z/my-project/download/INTEGRATION_NOTES.md (переписан точно по факту: 16 tools, верные команды)
+    54→- Отклонения: (1) selftest фолбэк на эфемерные порты (19001 занят в песочнице); (2) loops/oac_pipeline.yaml type: reasoning вместо "pipeline" (pydantic LoopType-enum); (3) project root = parents[3] с поиском по признаку (<root>/src/mcp_servers + <root>/agents), т.к. parents[2] из задания указывал бы на src/; (4) mcp-пакет уже был в /home/z/.venv — pip install не потребовался
+    55→
+    56→---
+    57→Task ID: 2-b
+    58→Agent: full-stack-developer
+    59→Task: Next.js 16 dashboard at `/` (RU) — «LLM-Agent × UniversalSniffer — Интеграция»: backend API + live simulated sniffer panel
+    60→
+    61→Work Log:
+    62→- prisma/schema.prisma: added model SnifferAlert (rule, severity, message, protocol?, client?, packetId?, createdAt), pushed via `bun run db:push`, client regenerated.
+    63→- src/lib/sniffer/hub.ts — synthetic Sniffer Hub (singleton on globalThis, HMR-safe via MODULE_EPOCH timer restart):
+    64→  ring buffers packets 5000 / alerts 500 / series 300; generator ~5 pps (200ms tick); packet shapes mirror real parsers
+    65→  (RemoteServer magic AA AA 00 00 + RequestCmdClass/RequestCmd/SessionNum/TransactionID labels, CMD_TYPES map incl.
+    66→  DB_REQUEST/CASHLESS_PAY/CASHLESS_ROLLBACK/SEND_TANKS_STATE; Thrift CALL/REPLY/EXCEPTION with sendTanksState etc.;
+    67→  HTTP GET/POST /api/v1/*; JSON events; Modbus func 3/4/6; RAW fallback), sizes 100B–30KB log-uniform + 0.5% ~1.2MB giants,
+    68→  TX 55% / RX 45%; sessions 3–7 active across all 5 channels (missing-channel fill so every protocol shows up),
+    69→  per-session tx/rx counters, open/close lifecycle; alert engine replicates config.json rules (Thrift EXCEPTION crit,
+    70→  Откат безналичной оплаты crit threshold 2/60s with ~2% rollback bursts, Гигантский пакет warn >1MB, Ошибка БД в запросе
+    71→  warn DB_REQUEST+«error»), 30s cooldown, alerts persisted to Prisma (verified rows in SQLite).
+    72→- src/lib/sniffer/integration-data.ts — static payload: 2 archives + snifferArchive (5 parsers) + full-package, 2 repos
+    73→  (mcp_designer_tools 4 tools + OAC 6 roles), 8-step integration plan (status done), fileTree 37 entries (src/sniffer/**,
+    74→  MCP sniffer/onec_designer_tools, agents, loops/oac_pipeline.yaml, docs), 15 MCP tools with HTTP mappings, 4 code snippets.
+    75→- API routes (Node runtime, force-dynamic where live): /api/sniffer/stream (SSE: status snapshot + packet/session/alert/stats
+    76→  forwarding, 15s heartbeat, abort cleanup), /api/sniffer/packets (limit/search/protocol/direction/minSize/maxSize),
+    77→  /api/sniffer/packet/[id] (detail + up to 2KB hexdump), /api/sniffer/stats, /api/sniffer/series, /api/sniffer/sessions,
+    78→  /api/sniffer/alerts (Prisma newest-first merged with live ring, dedup), /api/sniffer/reset (POST: buffers + alerts table),
+    79→  /api/integration, /api/download/package (real 2.5MB zip served; 404 {available:false} fallback), /api/download/notes.
+    80→- download/: built llm-agent-v2026-10-01-sniffer-integration.zip (1513 files: llm-agent tree + sniffer sources) and
+    81→  INTEGRATION_NOTES.md (RU: установка, порты, правила алертов, 15 tools, OAC, риски).
+    82→- Frontend (dark, emerald primary; TX=emerald / RX=cyan semantics): page.tsx (ThemeProvider forcedTheme=dark via next-themes,
+    83→  4 tabs, framer-motion tab transitions, sticky footer mt-auto + safe-area, sonner Toaster); header (Radar icon, SSE
+    84→  LIVE/офлайн pulsing badge, Reset with tooltip); use-sniffer-stream.ts hook (EventSource, event batching 500ms, client
+    85→  buffer 3000 packets, reconnect backoff 3s→15s); overview-tab (4 KPI, 3 archive cards, 2 repo cards, CSS architecture flow);
+    86→  sniffer-tab (4 live stat cards, inline-SVG pps chart with emerald gradient, filters: search/protocol Select/TX-RX
+    87→  ToggleGroup/size inputs/Пауза (frozen snapshot, bg buffering)/filtered counter; packets table max-h-[60vh] sticky header,
+    88→  latest 200 of N note, row → right Sheet with all fields + hexdump mono bg-slate-950; Sessions card; Тревоги card with
+    89→  mute Switch + toasts); integration-tab (download card, 8-step plan, fileTree ScrollArea, 15-tools table, code viewer);
+    90→  repos-tab (designer tools table + risk callout, OAC pipeline strip анализ→план→подтверждение→выполнение→проверка,
+    91→  roles table, MVI + Honcho callouts); footer with repo links.
+    92→- globals.css: .dark primary/ring → emerald; .custom-scroll thin scrollbar styles; layout.tsx metadata title/description only.
+    93→- eslint.config.mjs: ignore analysis/**, download/**, tests/**, mini-services/** (pre-existing vendored JS).
+    94→
+    95→Stage Summary:
+    96→- Dashboard complete at `/`: 4 tabs, RU, dark emerald theme, fully responsive; backend = 11 route endpoints + in-memory
+    97→  synthetic hub mirroring UniversalSniffer architecture; alerts persisted via Prisma/SQLite.
+    98→- Verified: `bun run lint` — 0 problems; `tsc --noEmit` clean for project sources; curl all endpoints 200 JSON;
+    99→  `curl -N` SSE streams packet ~5/s + stats 1/s + status snapshot; SQLite SnifferAlert rows present; zip/notes downloads
+   100→  200 (2.5MB / 3.9KB); dev.log free of runtime errors; no duplicate dev server started (port 3000 already serving).
+   101→- Not verified: visual E2E in browser (left to main agent); SSE long-lifetime reconnect under client throttling.
+   102→
+   103→---
+   104→Task ID: 3
+   105→Agent: main (Z.ai Code)
+   106→Task: E2E verification with agent-browser, QA fixes, final health checks
+   107→
+   108→Work Log:
+   109→- Verified all 4 tabs in browser: Обзор (KPI/архивы/репозитории/архитектура), Сниффер-демо (live SSE: статистика, pps-график, поток пакетов, фильтры, пауза/продолжить, детальный Sheet с hexdump, сессии, тревоги WARN/CRIT), Интеграция (zip-скачивание 200/2.5MB, план 8 шагов, дерево файлов 37, MCP-таблица 15 tools, code viewer), Репозитории (mcp_designer_tools 4 tools + OAC конвейер/роли/MVI)
+   110→- Verified mobile 390x844: табы складываются в сетку 2x2, карточки стекуются, таблица скроллится горизонтально
+   111→- Verified download endpoint: GET /api/download/package → 200 (2,497,910 bytes zip)
+   112→- QA fix 1: toast-уведомления накапливались и перекрывали кнопки → добавлены duration (2.5-3.5s), глобальный Toaster position=bottom-right duration=3000 closeButton, lang="ru" в layout
+   113→- QA fix 2 (критический): серьёзный layout-баг — контент ScrollArea переливался поверх соседних карточек на вкладке «Интеграция». Корневая причина: shadcn ScrollArea Root без overflow-hidden + процентная высота Viewport не резолвится против max-height родителя → Viewport рос до 1334px и вываливался из карточки. Исправление: в integration-tab.tsx ScrollArea заменён на нативные div (max-h-96 overflow-y-auto custom-scroll), в ui/scroll-area.tsx возвращён overflow-hidden. Проверено: overlap=false, внутренний скролл работает
+   114→- QA fix 3: убран backdrop-blur у sticky-хедера (перф + артефакты композитинга)
+   115→- lint: 0 ошибок; dev.log: только 200s, SSE-потоки живые, Prisma пишет алерты
+   116→
+   117→Stage Summary:
+   118→- Dashboard полностью работоспособен и проверен в браузере (десктоп + мобайл)
+   119→- Архитектурное знание для будущих итераций: в этом шаблоне shadcn ScrollArea с max-h-* на Root ломает клампинг — использовать нативные div с overflow-y-auto + custom-scroll
+   120→
+   121→---
+   122→Task ID: cron-review-20261002-0100
+   123→Agent: main (Z.ai Code)
+   124→Task: Cron-обзор: QA всех вкладок + новые функции (сценарии трафика, экспорт, аналитика) + полировка стилей
+   125→
+   126→Work Log:
+   127→- QA: agent-browser проверил все 4 вкладки и API (stats/packets/series) — стартовое состояние стабильно, ошибок в консоли нет
+   128→- Feature A — Сценарии трафика (демо-режимы генератора):
+   129→  * hub.ts: типы ScenarioId/ScenarioDef/ScenarioState, каталог SCENARIOS, состояние в HubState, события "scenario" в HubEvent
+   130→  * 4 сценария: azs_burst (x4 пак/с, 80% REMOTE_SERVER, 45с), thrift_storm (THRIFT с 30% EXCEPTION, 30с), giant_attack (все пакеты >1МБ, 20с), rollback_loop (серии CASHLESS_ROLLBACK, 25с)
+   131→  * checkAlertRules: пониженные кулдауны тревог внутри сценариев (6-12с) — чтобы шторм был виден
+   132→  * API /api/sniffer/scenario: GET (активный+каталог), POST {id}, DELETE (стоп); автозавершение по таймеру в tick()
+   133→  * UI: карточка «Сценарии трафика» с 4 кнопками + Остановить, амбер-подсветка и бейдж с обратным отсчётом при активном сценарии; тосты запуска/остановки
+   134→- Feature B — Экспорт (аналог exports реального сниффера): /api/sniffer/export?format=jsonl|csv|sessions|alerts — traffic.jsonl, Excel-отчёт CSV с «;» и BOM, sessions.csv, alerts.jsonl; Content-Disposition с таймстампом; UI: DropdownMenu «Экспорт» в шапке таблицы пакетов
+   135→- Feature C — Аналитика трафика: компонент protocol-breakdown.tsx — SVG-донат распределения протоколов (чистое вычисление сегментов без мутаций — под правило react-hooks/immutability) + Топ команд/методов (emerald-бары) + Активность клиентов (cyan-бары); карточка под графиком
+   136→- Стили: pps-chart — сетка с подписями значений, осевая линия, бейджи «макс/сред», метка «окно 2 мин»; зебра строк таблицы пакетов; красивый empty-state (Inbox + подсказка) вместо текстовой заглушки
+   137→- Хук use-sniffer-stream: поле scenario, обработчик SSE-события "scenario", буферизация в flush-цикле
+   138→- Fixes: layout.tsx — убран неиспользуемый Radix Toaster (дублировал sonner в page.tsx, падал tsc на props); page.tsx Toaster + duration=3000; hub.ts MODULE_EPOCH 4→5 (после HMR старые таймеры без сценарной логики не эмитили завершение — таймеры перезапущены); тосты алертов теперь по уникальному id (не спамят при ретрае событий)
+   139→
+   140→Stage Summary:
+   141→- Проверено в браузере: сценарии запускаются/останавливаются (curl + UI), автозавершение работает (POST → через 24с scenario=None), тревоги при thrift_storm каждые ~6с; все 4 экспорт-формата отдают файлы с корректным Content-Disposition; донат/топы рендерятся; зебра и empty-state на месте; мобайл 390px OK
+   142→- lint: 0 ошибок; tsc: чисто (кроме pre-existing examples/skills вне проекта); dev.log без ошибок
+   143→- Файлы: +2 роута (scenario, export), +protocol-breakdown.tsx, изменены hub.ts, use-sniffer-stream.ts, sniffer-tab.tsx, pps-chart.tsx, layout.tsx, page.tsx
+   144→
+   145→Unresolved / next:
+   146→- ПКAP-экспорт не делаем (синтетический трафик без реальных TCP-заголовков — честнее не притворяться)
+   147→- Идея: клик по сессии → фильтр таблицы по клиенту; «Заморозка графика» при паузе уже ок
+   148→- При желании: светлую тему не добавлять — панель аутентично тёмная, но компоненты захардкожены под dark
+   149→
+   150→---
+   151→Task ID: cron-review-20261002-0200
+   152→Agent: main (Z.ai Code)
+   153→Task: Cron-обзор: статус-ассессмент + QA через agent-browser + новые функции (UX-навигация, метрики, хоткеи) + полировка стилей
+   154→
+   155→Work Log:
+   156→- Статус-ассессмент: прочитан worklog, dev.log чист (200s, SSE живые, Prisma пишет алерты), curl-проверка stats/packets/scenario — OK
+   157→- QA через agent-browser: все 4 вкладки, запуск сценария thrift_storm (амбербейдж с отсчётом + crit-тосты), детальный Sheet с hexdump, мобильный вид 390px (через CDP Emulation.setDeviceMetricsOverride). Ошибок в консоли нет → фаза стабильная, решено развивать фичи, а не чинить баги
+   158→- Feature 1 — Переключатель метрики графика: PpsChart принимает metric "pps" | "bps" (SeriesPoint.bps уже приходил по SSE, но не использовался); байтовая метрика — cyan-линия, подписи сетки fmtCompact (337.1 тыс., 1.01 млн), бейджи макс/сред с единицами; ToggleGroup «пак/с | Б/с» в шапке карточки
+   159→- Feature 2 — Спарклайны в KPI-карточках: новый компонент sparkline.tsx (SVG без зависимостей, useId для градиента); карточки «Пакеты всего» (emerald, из series.pps) и «Байт перехвачено» (cyan, из series.bps); StatCard получил проп spark + hover-border glow + group-hover:scale-105 иконка + tabular-nums
+   160→- Feature 3 — Клик по сессии → фильтр по клиенту (заделка из backlog): строки таблицы «Сессии» кликабельны (cursor-pointer, hover-emerald, иконка FileSearch) → setSearch(IP из client-адреса) + scrollIntoView таблицы пакетов + тост
+   161→- Feature 4 — Клик по тревоге → открыть пакет: AlertRow с packetId кликабелен; сначала поиск в клиентском буфере, иначе fetch /api/sniffer/packet/{id} (возвращает {packet, hexdump}); если пакет вытеснен из буфера — понятная ошибка-тост; PacketDetailSheet поддерживает pendingId (скелет-загрузка с номером пакета)
+   162→- Feature 5 — Чипы активных фильтров: строка над таблицей (поиск/протокол/направление/размеры), каждый чип с X-сбросом + «сбросить всё»; role=status
+   163→- Feature 6 — Горячие клавиши: глобально 1–4 переключают вкладки (Tabs стал controlled, TAB_META с иконками); во вкладке сниффера P — пауза (вкл. русская «з»), «/» — фокус на поиск; гард от срабатывания в input/textarea/select/contentEditable и при открытом Sheet; Popover «Горячие клавиши» в шапке (kbd-чипы)
+   164→- Feature 7 — Кнопка «копировать» hexdump в PacketDetailSheet (navigator.clipboard + фидбек «скопировано»)
+   165→- Стили: иконки вкладок (LayoutDashboard/Radar/Blocks/Github), на мобиле вкладка показывает первое слово лейбла; tabular-nums в колонках времени/размера/алертов
+   166→- Fix: спарклайны в KPI скрываются < sm (на 390px зажимали текст карточки — найдено при мобильной проверке)
+   167→- lint: 0 ошибок; tsc: чисто (кроме pre-existing skills/ вне проекта); dev.log без ошибок; браузерная проверка всех фич пройдена (метрики, спарклайны, чипы, клик-сквозная навигация, хоткеи 2/1/P//, поповер)
+   168→
+   169→Stage Summary:
+   170→- Все новые фичи проверены в браузере (десктоп 1280 + мобайл 390 через CDP): график Б/с с форматированной сеткой, спарклайны, фильтр-чипы, session→filter, alert→packet (в т.ч. fetch из серверного буфера, пакет #14468), хоткеи, копирование hexdump
+   171→- Изменённые файлы: +sparkline.tsx; pps-chart.tsx (metric), sniffer-tab.tsx (чипы, клики, хоткеи, копия, pendingId), page.tsx (controlled tabs, хоткеи 1–4, иконки), header.tsx (Popover хоткеев), format.ts (fmtRate)
+   172→- Архитектурное знание: /api/sniffer/packet/[id] возвращает {packet, hexdump} — годится для навигации «алерт→пакет» без SSE; CDP Emulation.setDeviceMetricsOverride через ws://127.0.0.1:45701 — рабочий способ мобильного тестирования (agent-browser команды device/viewport на Linux недоступны)
+   173→
+   174→Unresolved / next:
+   175→- Идея: «инспектор сессии» — клик по сессии открывает Sheet со всеми пакетами этой сессии (сейчас фильтрует таблицу по IP)
+   176→- Идея: тумблер звука критических тревог (WebAudio beep) рядом с mute
+   177→- Идея: авто-подгрузка истории пакетов в таблицу (сейчас только последние 200 из отфильтрованного)
+   178→- Тема: компоненты по-прежнему захардкожены под dark — светлая не добавлять без рефактора
+   179→
+   180→---
+   181→Task ID: cron-review-20261002-0300
+   182→Agent: main (Z.ai Code)
+   183→Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи из бэклога (инспектор сессий, звук тревог, пагинация, чипы протоколов) + полировка стилей
+   184→
+   185→Work Log:
+   186→- Статус-ассессмент: worklog прочитан, dev.log чист (200s, SSE живые, Prisma пишет), lint 0, curl stats/packets/scenario OK
+   187→- QA agent-browser: все 4 вкладки, консоль без ошибок, мобайл 390px через CDP (ws://127.0.0.1:45701 + suppress_origin=True — прошлый раз работало без него, теперь нужен) → фаза стабильная, решено развивать бэклог
+   188→- Feature 1 — Инспектор сессии (главный пункт бэклога): новый компонент session-inspector.tsx — Sheet справа: бейджи (протокол/состояние/live-пульс), мини-статы (TX/RX пак., байты, ср. размер, длительность с тикером), список пакетов сессии с inline-раскрытием hexdump, «Показать ещё» внутри листа, кнопка «Фильтровать таблицу пакетов по клиенту» (старое поведение сохранено)
+   189→  * API /api/sniffer/packets: новые параметры client (точный ip:port) и port (точное имя канала) + deep-scan всего буфера 5000 при их наличии
+   190→  * Архитектура без sync-setState в эффектах (правило react-hooks/set-state-in-effect): история из сервера (mount-only fetch), live-дополнение — чистый useMemo-мерж SSE-буфера с дедупликацией по id; компонент монтируется с key={sessionId} — состояние сбрасывается сменой сессии
+   191→  * Клик по строке сессии теперь открывает инспектор (иконка Radio, тултип обновлён)
+   192→- Feature 2 — Звук критических тревог: src/lib/sound.ts (WebAudio: AudioContext лениво по жесту пользователя, двухтональный crit-сигнал 880→620 Гц, подтверждающий блип 660→990 Гц); кнопка-тумблер Volume2/VolumeX в шапке карточки «Тревоги» рядом с mute-свитчем (разделены вертикальным сепаратором); useEffect реагирует только на новые CRIT-id (без спама при ретраях)
+   193→- Feature 3 — Подгрузка истории пакетов: visibleCount (200 старт) + «Показать ещё 200» и «показать все (N)» под таблицей; сброс пагинации при смене фильтров; шапка показывает «показаны N из M»
+   194→- Feature 4 — Чипы быстрого фильтра каналов: тулбар над таблицей из stats.perProtocol (цветная точка protocolDot + имя + живой счётчик), клик — фильтр, повторный — сброс; aria-pressed, role=toolbar
+   195→- Стили: crit-glow (красное свечение shadow + пульс иконки 15с после CRIT) на KPI-карточке «Тревоги»; красный тинт строк невалидных пакетов вместо зебры; бейдж «активных: N» в шапке «Сессий», бейдж «crit: N» в шапке «Тревог»; изумрудная хайрлайн-линия под sticky-хедером (.header-hairline в globals.css); ::selection в изумрудной гамме; тонкий скроллбар по умолчанию в Firefox
+   196→- Fix: format.ts +protocolDot(); кириллическая «з»-хоткей логика не тронута; soundSeenRef не даёт бипнуть на ретрае события
+   197→
+   198→Stage Summary:
+   199→- Проверено в браузере (десктоп 1280 + мобайл 390 через CDP): инспектор сессии открывается/закрывается, история 86→95 пакетов live-дополнением, hexdump inline раскрывается, кнопка фильтра работает и закрывает лист; чип HTTP → «протокол: HTTP» в активных фильтрах (60 из 470); «Показать ещё» 200→400 строк; звук-тумблер переключается (Volume2 активен, confirm-блип), WebAudio доступен; crit-glow виден при thrift_storm (107 тревог); API-фильтр client+port возвращает точную сессию (68 пакетов, deep-scan 5000)
+   200→- lint: 0 ошибок; tsc: чисто (кроме pre-existing skills/ вне проекта); dev.log без ошибок
+   201→- Файлы: +session-inspector.tsx, +sound.ts; изменены sniffer-tab.tsx, packets/route.ts, format.ts, globals.css, header.tsx
+   202→- Архитектурное знание: правило react-hooks/set-state-in-effect запрещает sync-setState в эффектах — паттерн «key-remount + mount-only fetch + useMemo-мерж живых данных»; CDP-эмуляция мобайла теперь требует suppress_origin=True при ws-подключении
+   203→
+   204→Unresolved / next:
+   205→- Идея: экспорт текущей сессии из инспектора (jsonl/csv только этой сессии)
+   206→- Идея: глобальный индикатор «N новых пакетов» при паузе с кнопкой «перейти к свежим»
+   207→- Идея: тёмная/светлая тема — компоненты всё ещё захардкожены под dark
+   208→- В headless-браузере звук не слышен — проверить вручную в реальном браузере при желании
+   209→
+   210→---
+   211→Task ID: cron-review-20261002-0400
+   212→Agent: main (Z.ai Code)
+   213→Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи бэклога (экспорт сессии, пилюля «новые пакеты», подсветка поиска, распределение тревог) + полировка стилей
+   214→
+   215→Work Log:
+   216→- Статус-ассессмент: worklog прочитан, dev.log чист (200s, SSE живые), lint 0, curl stats/scenario/alerts OK
+   217→- QA: 0 ошибок в консоли в свежей сессии браузера (12 старых [error] «Export protocolDot doesn't exist» оказались историческим шумом HMR Turbopack из прошлой сессии — счётчик не растёт, в новой сессии 0; код на диске корректен). Все 4 вкладки + хоткеи 3/4 проверены
+   218→- Feature 1 — Экспорт сессии из инспектора (бэклог): /api/sniffer/export принимает client+port (точный фильтр буфера 5000) → session_<ip>_<канал>_<ts>.jsonl|csv; новый sessionCsv со сводкой сессии (TX/RX, байты); в шапке «Пакеты сессии» инспектора — DropdownMenu «Экспорт» (jsonl/csv, label «только эта сессия»); e2e-скачивание из UI проверено (44 пакета одной сессии)
+   219→- Feature 2 — Плавающая пилюля «N новых пакетов в фоне» при паузе: frozenTopId фиксируется при паузе; счётчик пакетов с id > frozenTopId; пилюля снизу по центру (пульс-точка, счётчик, кнопка «Перейти к свежим» → снять паузу + scrollIntoView таблицы). ВАЖНО: рендер через createPortal(document.body) — framer-motion оставляет transform на обёртке вкладки, и fixed позиционируется от неё, а не от viewport (найдено при визуальной проверке); animate-in/fade-in/slide-in-from-bottom-3
+   220→- Feature 3 — Подсветка поиска: компонент Highlight (split по экранированному regex, <mark> bg-emerald-500/25) в колонках «Тип / метод» и «Резюме» таблицы пакетов
+   221→- Feature 4 — Распределение тревог по правилам: mini stacked-bar (h-1.5, топ-3 правила + «другие», палитра red/amber/violet/slate) + легенда со счётчиками в шапке карточки «Тревоги»; role="img" с aria-label полного распределения
+   222→- Стили: радиальное изумрудное свечение сверху вкладки сниффера (pointer-events-none, absolute -top-6)
+   223→- Мобайл 390px через CDP (Emulation.setDeviceMetricsOverride, порт из DevToolsActivePort в user-data-dir, suppress_origin=True): фильтры стекуются, чипы каналов в 2 колонки, распределение тревог и пилюля на месте; эмуляция сброшена после проверки
+   224→- lint: 0 ошибок; tsc: чисто; dev.log без ошибок
+   225→
+   226→Stage Summary:
+   227→- Проверено в браузере: экспорт сессии (меню + скачивание), пилюля паузы (появление, счётчик 30→43, клик → исчезает + скролл), подсветка sendTanksState в двух колонках, бар правил (26/24, 25/25), мобайл 390px
+   228→- Файлы: изменены export/route.ts (+SessionFilter, +sessionCsv, +slug), session-inspector.tsx (+DropdownMenu экспорта), sniffer-tab.tsx (+Highlight, +frozenTopId/newWhilePaused/jumpToFresh, +ruleDist, +createPortal-пилюля, +radial glow)
+   229→- Архитектурное знание: fixed-элементы внутри framer-motion-вкладок рендерить через createPortal в body; CDP-порт теперь берётся из <user-data-dir>/DevToolsActivePort (порт динамический, 45983 на этот раз)
+   230→
+   231→Unresolved / next:
+   232→- Идея: «Заморозка» аналитики (донат/топы) при паузе сейчас продолжает жить — можно снапшотить
+   233→- Идея: тёмная/светлая тема — компоненты по-прежнему под dark
+   234→- Идея: экспорт «только отфильтрованное» из таблицы (сейчас экспорт всегда весь буфер)
+   235→
+   236→---
+   237→Task ID: cron-review-20261002-0500
+   238→Agent: main (Z.ai Code)
+   239→Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи бэклога (экспорт отфильтрованного, заморозка аналитики, JSON-копия пакета) + фикс мобильных KPI
+   240→
+   241→Work Log:
+   242→- Статус-ассессмент: worklog прочитан; dev.log чист (200s, SSE живые, Prisma пишет алерты); lint 0; curl stats/scenario/integration OK
+   243→- QA agent-browser: все 4 вкладки, консоль без ошибок; десктоп 1280 (set viewport) и мобайл 390 (set viewport — нативная команда agent-browser, CDP-скрипт больше не нужен). Фаза стабильная → решено развивать бэклог
+   244→- Feature A — Экспорт «только отфильтрованного» (бэклог):
+   245→  * новый общий модуль src/lib/sniffer/packet-filter.ts: PacketFilterParams, packetFilterFromSearchParams, hasActiveFilter, filterPackets — единая семантика фильтра для таблицы и экспорта (включая search по summary/method/methodType/cmdType/client/protocol/portName)
+   246→  * /api/sniffer/packets переведён на общий фильтр (поведение идентичное, deep-scan client/port сохранён — проверено curl)
+   247→  * /api/sniffer/export: при наличии search/protocol/direction/minSize/maxSize — фильтрованный срез буфера; имя файла traffic_filtered_<ts>.jsonl / sniffer_report_filtered_<ts>.csv; CSV-шапка «отфильтрованный срез буфера» + строка «Условия;…»
+   248→  * UI: в меню «Экспорт» при активных фильтрах появляется секция «по текущему фильтру» (Filter-иконка, emerald) с filtered.jsonl (живой счётчик «N пак.») и filtered.csv; разделитель role=separator
+   249→- Feature B — Заморозка аналитики на паузе (бэклог): снапшот stats → frozenStats при паузе; карточка «Аналитика трафика» и чипы каналов рендерятся от visibleStats; амбер-бейдж «снимок на паузе» + амбер-бордер + подпись «зафиксировано на момент паузы»; сброс в handlePause/jumpToFresh; тост паузы упоминает фиксацию аналитики. График и KPI остаются живыми (приём в фоне)
+   250→- Fix C — мобильная обрезка KPI (найдено на QA 390px: «22.2 т…», «331.6…»): StatCard icon size-9 sm:size-11, value text-base sm:text-lg + tracking-tight, паддинг p-3 sm:p-4, label text-[11px] sm:text-xs; ховер-подъём hover:-translate-y-0.5 + цветная hover-тень
+   251→- Feature D — копия полей пакета как JSON в PacketDetailSheet: кнопка «JSON» (FileJson) над таблицей полей, packetJson useMemo без hexPreview, feedback «скопировано» 1.5с
+   252→- Проверено в браузере: фильтр THRIFT → секция фильтр-экспорта (79 пак.), curl csv/jsonl с условиями (1389/132 строк против 4999 всего); пауза → донат замер (23.3k в двух скриншотах через 5с), топы идентичны, пилюля 53→81 и uptime растут; JSON-кнопка в листе; мобайл 390 — значения KPI полностью видны
+   253→- lint: 0; tsc: чисто; dev.log без ошибок; консоль браузера чистая
+   254→
+   255→Stage Summary:
+   256→- Файлы: +src/lib/sniffer/packet-filter.ts; изменены packets/route.ts (рефактор на общий фильтр), export/route.ts (+фильтрованный срез, +Условия в CSV, filtered_ инфикс), sniffer-tab.tsx (frozenStats/visibleStats, бейдж снимка, секция фильтр-экспорта, StatCard responsive+hover, JSON-копия, Filter-иконка)
+   257→- Архитектурное знание: agent-browser set viewport W H — нативная замена CDP-эмуляции для мобильных проверок; общий packet-filter исключает расползание семантики фильтра между таблицей и экспортом
+   258→
+   259→Unresolved / next:
+   260→- Идея: «сравнить срезы» — диф двух снапшотов аналитики (до/после сценария)
+   261→- Идея: счётчик экспортируемых строк в глобальных пунктах меню (нужен лёгкий HEAD-подсчёт)
+   262→- Тема: компоненты по-прежнему захардкожены под dark — светлую не добавлять без рефактора
+   263→
+   264→---
+   265→Task ID: cron-review-20261002-0600
+   266→Agent: main (Z.ai Code)
+   267→Task: Cron-обзор: статус-ассессмент + QA (agent-browser) + фичи (журнал тревог из БД, итоги сценария) + полировка стилей
+   268→
+   269→Work Log:
+   270→- Статус-ассессмент: worklog прочитан; dev.log чист (200s, SSE живые); lint 0; БД 147 алертов; /api/sniffer/alerts работал в merged-режиме
+   271→- QA agent-browser: свежая сессия, все 4 вкладки хоткеями 1–4, консоль без ошибок, десктоп 1280 → фаза стабильная, развиваем фичи
+   272→- Feature A — Журнал тревог (персистентная история из SQLite, full-stack):
+   273→  * /api/sniffer/alerts: новый history-режим (?history=1&limit&offset&severity) — только Prisma-записи с пагинацией по offset, фильтром severity и счётчиками по уровням (Promise.all: rows+total+crit+warn+info); 503 при недоступной БД; merged-режим сохранён (обратная совместимость)
+   274→  * новый компонент alerts-journal.tsx: Sheet справа — бейдж «SQLite: N», тулбар-фильтр по severity (все/crit N/warn N/info N, aria-радио), список с зеброй (severity-бейдж + время, правило + protocol-бейдж, message line-clamp-2, клиент + № пакета, FileSearch у кликабельных), клик по записи с packetId → лист закрывается и открывается PacketDetailSheet (переиспользование openPacketById), «Показать ещё» (offset-пагинация), empty/error/loading-состояния
+   275→  * кнопка «Журнал N» (Database, cyan) в шапке карточки «Тревоги»; счётчик N = stats.alertsCount
+   276→  * проверено: открытие (SQLite: 153, показано 50 из 153), фильтр crit (80 → все строки CRIT), клик по записи → пакет #24780 с hexdump, история в БД переживает reload страницы (очищается только Reset — осознанная семантика)
+   277→- Feature B — Итоги сценария (дельты за окно генерации):
+   278→  * use-sniffer-stream: в SSE-обработчике события "scenario" (чистый event-handler, без setState в эффектах) — на старте снапшот счётчиков в scenarioStartRef, на завершении (payload null) расчёт дельт packets/bytes/alerts/invalid/durationSec → новое поле состояния scenarioResult (тип ScenarioResult)
+   279→  * sniffer-tab: блок ScenarioResults внутри карточки «Сценарии» — emerald-бордер, animate-in fade/slide, бейдж длительности, дельты с иконками (+N пакетов · N/с, +X МБ, +N тревог, N невалидных); скрытие — локальное состояние ребёнка, сбрасывается автоматически сменой key={startedAt} при следующем сценарии (без эффектов)
+   280→  * проверено e2e дважды: giant_attack (20с) → «+99 пакетов · 5/с · +118.78 МБ · +3 тревог · 2 невалидных»; rollback_loop (25с) → «+365 пакетов · 14.6/с · +2.39 МБ · +2 тревог · 21 невалидных»; дискисс работает, блок снова появляется после нового сценария
+   281→- Полировка: title-тултипы на обрезаемых ячейках «Канал» (порт · клиент) и «Резюме» таблицы пакетов
+   282→- Мобайл 390px: журнал и итоги сценария адаптивны (дельты переносятся на 2 строки, бейдж сценария с обратным отсчётом виден)
+   283→- lint: 0; tsc: чисто; dev.log и консоль браузера без ошибок
+   284→
+   285→Stage Summary:
+   286→- Файлы: +alerts-journal.tsx; изменены alerts/route.ts (+history-режим), use-sniffer-stream.ts (+ScenarioResult, +scenarioStartRef, расчёт дельт в event-handler), sniffer-tab.tsx (+ScenarioResults, +кнопка Журнал, +AlertsJournal, +title-тултипы)
+   287→- Архитектурное знание: события жизненного цикла сценария считаются внутри SSE event-handler'ов хука (setState из колбэка — вне правил react-hooks); паттерн «скрываемый блок с локальным hidden + key-remount от новой сущности» избавляет от эффектов
+   288→- Итоги сценария считаются от statsBufRef (лаг до 500мс батчинга) — дельты могут быть на 1-2 пакета меньше реальных; для демо некритично
+   289→
+   290→Unresolved / next:
+   291→- Идея: «сравнить срезы» аналитики до/после сценария (дельты по протоколам из двух снапшотов perProtocol)
+   292→- Идея: экспорт журнала тревог из Sheet (csv/jsonl из БД с тем же фильтром severity)
+   293→- Идея: счётчик экспортируемых строк в глобальных пунктах меню экспорта
+   294→- Тема: компоненты по-прежнему захардкожены под dark
+   295→

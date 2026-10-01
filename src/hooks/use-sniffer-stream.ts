@@ -75,6 +75,8 @@ export interface ScenarioResult {
   bytes: number;
   alerts: number;
   invalid: number;
+  /** Дельты по протоколам (срез на старте → срез на финише): «сравнение срезов». */
+  perProtocol: Record<string, number>;
 }
 
 export interface SnifferStats {
@@ -154,6 +156,7 @@ export function useSnifferStream(): SnifferLiveState {
     bytes: number;
     alerts: number;
     invalid: number;
+    perProtocol: Record<string, number>;
   } | null>(null);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dirtyRef = useRef(false);
@@ -305,7 +308,7 @@ export function useSnifferStream(): SnifferLiveState {
           scenarioBufRef.current = sc;
           dirtyRef.current = true;
           if (sc) {
-            // старт сценария: фиксируем срез счётчиков
+            // старт сценария: фиксируем срез счётчиков (вкл. perProtocol для сравнения срезов)
             const st = statsBufRef.current;
             scenarioStartRef.current = {
               id: sc.id,
@@ -315,6 +318,7 @@ export function useSnifferStream(): SnifferLiveState {
               bytes: st?.totalBytes ?? 0,
               alerts: st?.alertsCount ?? 0,
               invalid: st?.invalidPackets ?? 0,
+              perProtocol: st?.perProtocol ? { ...st.perProtocol } : {},
             };
           } else {
             // завершение сценария: считаем дельты и публикуем итог
@@ -322,6 +326,12 @@ export function useSnifferStream(): SnifferLiveState {
             scenarioStartRef.current = null;
             if (start) {
               const st = statsBufRef.current;
+              // Сравнение срезов по протоколам: рост счётчика за окно сценария
+              const perProtocol: Record<string, number> = {};
+              for (const [proto, now] of Object.entries(st?.perProtocol ?? {})) {
+                const delta = now - (start.perProtocol[proto] ?? 0);
+                if (delta > 0) perProtocol[proto] = delta;
+              }
               const result: ScenarioResult = {
                 id: start.id,
                 label: start.label,
@@ -331,6 +341,7 @@ export function useSnifferStream(): SnifferLiveState {
                 bytes: Math.max(0, (st?.totalBytes ?? 0) - start.bytes),
                 alerts: Math.max(0, (st?.alertsCount ?? 0) - start.alerts),
                 invalid: Math.max(0, (st?.invalidPackets ?? 0) - start.invalid),
+                perProtocol,
               };
               setState((prev) => ({ ...prev, scenarioResult: result }));
             }

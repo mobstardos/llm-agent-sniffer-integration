@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
 import {
   getRecentPackets,
   getLiveAlerts,
@@ -20,11 +21,15 @@ export const dynamic = "force-dynamic";
  * GET /api/sniffer/export?format=jsonl|csv|sessions|alerts&limit=N
  *                        [&client=ip:port] [&port=ChannelName] — экспорт одной сессии
  *                        [&search=&protocol=&direction=&minSize=&maxSize=] — экспорт «только отфильтрованного»
+ * GET /api/sniffer/export?format=alerts_db|alerts_db_csv[&severity=crit|warn|info]
+ *                        — персистентный журнал тревог из SQLite (с тем же фильтром severity, что в UI)
+ * GET /api/sniffer/export?counts=1 — лёгкий JSON со счётчиками строк для меню экспорта
  *
  * Экспорт кольцевого буфера — аналог экспорта реального UniversalSniffer:
  *  - jsonl  → capture/traffic.jsonl (по строке JSON на пакет)
  *  - csv    → capture/reports/*.csv (Excel-отчёт, разделитель «;»)
- *  - alerts → capture/alerts.jsonl (журнал тревог)
+ *  - alerts → capture/alerts.jsonl (журнал тревог живого ring)
+ *  - alerts_db → capture/alerts_journal.jsonl|csv (SQLite-история, переживает Reset буфера)
  *  - sessions → capture/reports/sessions.csv
  *  При наличии client/port — срез одной сессии (jsonl/csv).
  *  При наличии поисковых условий — фильтрованный срез буфера (jsonl/csv).
@@ -59,6 +64,64 @@ interface PacketLike {
   size: number;
   valid: boolean;
   summary: string;
+}
+
+/**
+ * Записи журнала тревог из SQLite (формат экспорта alerts_db / alerts_db_csv).
+ * Тот же фильтр severity, что у журнала в UI; верхний предел 5000 строк.
+ */
+async function alertsDbRows(severity?: string) {
+  const sevOk = ["crit", "warn", "info"].includes(severity ?? "")
+    ? (severity as "crit" | "warn" | "info")
+    : undefined;
+  return db.snifferAlert.findMany({
+    where: sevOk ? { severity: sevOk } : {},
+    orderBy: { createdAt: "desc" },
+    take: 5000,
+  });
+}
+
+function alertsDbJsonl(rows: Awaited<ReturnType<typeof alertsDbRows>>): string {
+  return rows
+    .map((a) =>
+      JSON.stringify({
+        ts: a.createdAt.toISOString(),
+        rule: a.rule,
+        severity: a.severity,
+        protocol: a.protocol,
+        client: a.client,
+        packet_id: a.packetId,
+        message: a.message,
+      })
+    )
+    .join("\n");
+}
+
+function alertsDbCsv(rows: Awaited<ReturnType<typeof alertsDbRows>>): string {
+  const lines: string[] = [];
+  const crit = rows.filter((a) => a.severity === "crit").length;
+  const warn = rows.filter((a) => a.severity === "warn").length;
+  const info = rows.filter((a) => a.severity === "info").length;
+  lines.push("Universal Sniffer — журнал тревог из SQLite (демо-панель)");
+  lines.push(`Сформирован;${new Date().toLocaleString("ru-RU")}`);
+  lines.push(`Записей;${rows.length}`);
+  lines.push(`CRIT;${crit};WARN;${warn};INFO;${info}`);
+  lines.push("");
+  lines.push("ВРЕМЯ;УРОВЕНЬ;ПРАВИЛО;ПРОТОКОЛ;КЛИЕНТ;ПАКЕТ;СООБЩЕНИЕ");
+  for (const a of rows) {
+    lines.push(
+      [
+        a.createdAt.toISOString(),
+        a.severity.toUpperCase(),
+        csvEscape(a.rule),
+        a.protocol ?? "—",
+        csvEscape(a.client ?? "—"),
+        a.packetId ?? "—",
+        csvEscape(a.message),
+      ].join(";")
+    );
+  }
+  return lines.join("\n");
 }
 
 /** ip:port / «RemoteServer TCP» → безопасный кусок имени файла */
@@ -243,18 +306,46 @@ function sessionCsv(filter: SessionFilter, extra?: PacketFilterParams): string {
 }
 
 export async function GET(req: NextRequest) {
-  const format = req.nextUrl.searchParams.get("format") ?? "jsonl";
-  const client = req.nextUrl.searchParams.get("client") ?? undefined;
-  const port = req.nextUrl.searchParams.get("port") ?? undefined;
+  const sp = req.nextUrl.searchParams;
+  const format = sp.get("format") ?? "jsonl";
+  const client = sp.get("client") ?? undefined;
+  const port = sp.get("port") ?? undefined;
   const hasSessionFilter = !!(client || port);
   const filter: SessionFilter | undefined = hasSessionFilter
     ? { client: client || undefined, port: port || undefined }
     : undefined;
   // «только отфильтрованное» — те же условия, что в таблице пакетов
-  const extra = packetFilterFromSearchParams(req.nextUrl.searchParams);
+  const extra = packetFilterFromSearchParams(sp);
   const filtered = hasActiveFilter(extra);
   const ts = stamp();
   const filterInfix = filtered ? "filtered_" : "";
+
+  // ── Лёгкий подсчёт строк для счётчиков меню экспорта (без генерации файлов) ──
+  if (sp.get("counts")) {
+    const packets = getRecentPackets(EXPORT_CAP);
+    let filteredCount: number | null = null;
+    if (filtered) {
+      filteredCount = filterPackets(packets, extra).filter((p) =>
+        matchesFilter(p, filter)
+      ).length;
+    }
+    let alertsDb: number | null = null;
+    try {
+      alertsDb = await db.snifferAlert.count();
+    } catch {
+      // БД недоступна — счётчик не отдаём
+    }
+    return NextResponse.json(
+      {
+        packets: packets.length,
+        filtered: filteredCount,
+        sessions: getSessions().length,
+        alerts: getLiveAlerts(ALERTS_CAP_MAX).length,
+        alertsDb,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
 
   switch (format) {
     case "jsonl": {
@@ -298,9 +389,29 @@ export async function GET(req: NextRequest) {
           "Cache-Control": "no-store",
         },
       });
+    case "alerts_db":
+    case "alerts_db_csv": {
+      // Персистентный журнал из SQLite с фильтром severity (как в UI журнала)
+      const severity = sp.get("severity") ?? undefined;
+      const rows = await alertsDbRows(severity);
+      const sevInfix = severity && ["crit", "warn", "info"].includes(severity) ? `${severity}_` : "";
+      const isCsv = format === "alerts_db_csv";
+      return new NextResponse(
+        isCsv ? "\uFEFF" + alertsDbCsv(rows) : alertsDbJsonl(rows),
+        {
+          headers: {
+            "Content-Type": isCsv
+              ? "text/csv; charset=utf-8"
+              : "application/x-ndjson; charset=utf-8",
+            "Content-Disposition": `attachment; filename="alerts_journal_${sevInfix}${ts}.${isCsv ? "csv" : "jsonl"}"`,
+            "Cache-Control": "no-store",
+          },
+        }
+      );
+    }
     default:
       return NextResponse.json(
-        { error: "Формат поддерживает: jsonl | csv | sessions | alerts" },
+        { error: "Формат поддерживает: jsonl | csv | sessions | alerts | alerts_db | alerts_db_csv" },
         { status: 400 }
       );
   }

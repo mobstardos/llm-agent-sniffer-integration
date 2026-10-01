@@ -1,0 +1,707 @@
+     1→   951→                id="max-size"
+     2→   952→                inputMode="numeric"
+     3→   953→                placeholder="∞"
+     4→   954→                value={maxSize}
+     5→   955→                onChange={(e) => setMaxSize(e.target.value.replace(/\D/g, ""))}
+     6→   956→                className="h-10 border-slate-700 bg-slate-950 text-sm text-slate-200 placeholder:text-slate-600"
+     7→   957→              />
+     8→   958→            </div>
+     9→   959→          </div>
+    10→   960→          <div className="flex items-end gap-2">
+    11→   961→            <Button
+    12→   962→              onClick={handlePause}
+    13→   963→              variant="outline"
+    14→   964→              className={`min-h-[44px] border-slate-700 sm:min-h-[40px] ${
+    15→   965→                paused
+    16→   966→                  ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+    17→   967→                  : "bg-slate-950 text-slate-200 hover:bg-slate-800"
+    18→   968→              }`}
+    19→   969→              aria-pressed={paused}
+    20→   970→            >
+    21→   971→              {paused ? (
+    22→   972→                <>
+    23→   973→                  <Play className="size-4" aria-hidden /> Продолжить
+    24→   974→                </>
+    25→   975→              ) : (
+    26→   976→                <>
+    27→   977→                  <Pause className="size-4" aria-hidden /> Пауза
+    28→   978→                </>
+    29→   979→              )}
+    30→   980→            </Button>
+    31→   981→          </div>
+    32→   982→          <div className="flex items-end">
+    33→   983→            <span className="whitespace-nowrap rounded-md border border-slate-800 bg-slate-950 px-2.5 py-2 font-mono text-[11px] text-slate-400">
+    34→   984→              отфильтровано: <span className="text-emerald-300">{fmtCompact(filtered.length)}</span> из{" "}
+    35→   985→              {fmtCompact(packets.length)}
+    36→   986→            </span>
+    37→   987→          </div>
+    38→   988→        </CardContent>
+    39→   989→      </Card>
+    40→   990→
+    41→   991→      {/* Активные фильтры (чипы) */}
+    42→   992→      {chips.length > 0 && (
+    43→   993→        <div className="flex flex-wrap items-center gap-2" role="status" aria-label="Активные фильтры">
+    44→   994→          <span className="text-[11px] uppercase tracking-wider text-slate-500">Фильтры:</span>
+    45→   995→          {chips.map((c) => (
+    46→   996→            <span
+    47→   997→              key={c.key}
+    48→   998→              className="inline-flex max-w-[260px] items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 py-1 pl-2.5 pr-1 text-[11px] text-emerald-300"
+    49→   999→            >
+    50→  1000→              <span className="truncate font-mono">{c.label}</span>
+    51→  1001→              <button
+    52→  1002→                type="button"
+    53→  1003→                onClick={c.clear}
+    54→  1004→                aria-label={`Сбросить фильтр ${c.label}`}
+    55→  1005→                className="flex size-5 shrink-0 items-center justify-center rounded-full hover:bg-emerald-500/20"
+    56→  1006→              >
+    57→  1007→                <X className="size-3" aria-hidden />
+    58→  1008→              </button>
+    59→  1009→            </span>
+    60→  1010→          ))}
+    61→  1011→          <Button
+    62→  1012→            size="sm"
+    63→  1013→            variant="ghost"
+    64→  1014→            onClick={() => {
+    65→  1015→              setSearch("");
+    66→  1016→              setProtocol("all");
+    67→  1017→              setDirection("all");
+    68→  1018→              setMinSize("");
+    69→  1019→              setMaxSize("");
+    70→  1020→            }}
+    71→  1021→            className="h-7 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+    72→  1022→          >
+    73→  1023→            сбросить всё
+    74→  1024→          </Button>
+    75→  1025→        </div>
+    76→  1026→      )}
+    77→  1027→
+    78→  1028→      {/* Таблица пакетов */}
+    79→  1029→      <Card ref={tableCardRef} className="scroll-mt-20 border-slate-800 bg-slate-900/60">
+    80→  1030→        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2">
+    81→  1031→          <CardTitle className="flex flex-wrap items-center gap-2 text-sm text-slate-200">
+    82→  1032→            <span className="flex items-center gap-2">
+    83→  1033→              Поток пакетов
+    84→  1034→              {paused && (
+    85→  1035→                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-400">
+    86→  1036→                  пауза — показан снимок
+    87→  1037→                </Badge>
+    88→  1038→              )}
+    89→  1039→              {!connected && (
+    90→  1040→                <Badge variant="outline" className="border-red-500/50 bg-red-500/10 text-[10px] text-red-400">
+    91→  1041→                  офлайн
+    92→  1042→                </Badge>
+    93→  1043→              )}
+    94→  1044→            </span>
+    95→  1045→            {filtered.length > display.length && (
+    96→  1046→              <span className="text-[11px] font-normal text-slate-500">
+    97→  1047→                показаны {display.length} из {fmtCompact(filtered.length)}
+    98→  1048→              </span>
+    99→  1049→            )}
+   100→  1050→          </CardTitle>
+   101→  1051→          <DropdownMenu>
+   102→  1052→            <DropdownMenuTrigger asChild>
+   103→  1053→              <Button
+   104→  1054→                size="sm"
+   105→  1055→                variant="outline"
+   106→  1056→                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+   107→  1057→              >
+   108→  1058→                <Download className="size-3.5" aria-hidden />
+   109→  1059→                Экспорт
+   110→  1060→              </Button>
+   111→  1061→            </DropdownMenuTrigger>
+   112→  1062→            <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
+   113→  1063→              <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500">
+   114→  1064→                как в реальном сниффере
+   115→  1065→              </DropdownMenuLabel>
+   116→  1066→              <DropdownMenuItem asChild>
+   117→  1067→                <a href="/api/sniffer/export?format=jsonl" download className="cursor-pointer">
+   118→  1068→                  <FileJson className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   119→  1069→                  traffic.jsonl — пакеты
+   120→  1070→                </a>
+   121→  1071→              </DropdownMenuItem>
+   122→  1072→              <DropdownMenuItem asChild>
+   123→  1073→                <a href="/api/sniffer/export?format=csv" download className="cursor-pointer">
+   124→  1074→                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   125→  1075→                  отчёт CSV — сводка + пакеты
+   126→  1076→                </a>
+   127→  1077→              </DropdownMenuItem>
+   128→  1078→              <DropdownMenuItem asChild>
+   129→  1079→                <a href="/api/sniffer/export?format=sessions" download className="cursor-pointer">
+   130→  1080→                  <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+   131→  1081→                  sessions.csv — сессии
+   132→  1082→                </a>
+   133→  1083→              </DropdownMenuItem>
+   134→  1084→              <DropdownMenuItem asChild>
+   135→  1085→                <a href="/api/sniffer/export?format=alerts" download className="cursor-pointer">
+   136→  1086→                  <FileJson className="mr-2 size-3.5 text-amber-400" aria-hidden />
+   137→  1087→                  alerts.jsonl — журнал тревог
+   138→  1088→                </a>
+   139→  1089→              </DropdownMenuItem>
+   140→  1090→              {filterQuery && (
+   141→  1091→                <>
+   142→  1092→                  <div
+   143→  1093→                    role="separator"
+   144→  1094→                    aria-orientation="horizontal"
+   145→  1095→                    className="my-1 h-px bg-slate-800"
+   146→  1096→                  />
+   147→  1097→                  <DropdownMenuLabel className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-emerald-400/80">
+   148→  1098→                    <Filter className="size-3" aria-hidden />
+   149→  1099→                    по текущему фильтру
+   150→  1100→                  </DropdownMenuLabel>
+   151→  1101→                  <DropdownMenuItem asChild>
+   152→  1102→                    <a
+   153→  1103→                      href={`/api/sniffer/export?format=jsonl&${filterQuery}`}
+   154→  1104→                      download
+   155→  1105→                      className="cursor-pointer"
+   156→  1106→                    >
+   157→  1107→                      <FileJson className="mr-2 size-3.5 text-emerald-300" aria-hidden />
+   158→  1108→                      filtered.jsonl — {fmtCompact(filtered.length)} пак.
+   159→  1109→                    </a>
+   160→  1110→                  </DropdownMenuItem>
+   161→  1111→                  <DropdownMenuItem asChild>
+   162→  1112→                    <a
+   163→  1113→                      href={`/api/sniffer/export?format=csv&${filterQuery}`}
+   164→  1114→                      download
+   165→  1115→                      className="cursor-pointer"
+   166→  1116→                    >
+   167→  1117→                      <FileSpreadsheet className="mr-2 size-3.5 text-emerald-300" aria-hidden />
+   168→  1118→                      filtered.csv — срез буфера
+   169→  1119→                    </a>
+   170→  1120→                  </DropdownMenuItem>
+   171→  1121→                </>
+   172→  1122→              )}
+   173→  1123→            </DropdownMenuContent>
+   174→  1124→          </DropdownMenu>
+   175→  1125→        </CardHeader>
+   176→  1126→        <CardContent className="p-0 pb-2">
+   177→  1127→          {/* Быстрые фильтры каналов с живыми счётчиками */}
+   178→  1128→          {protoChips.length > 0 && (
+   179→  1129→            <div
+   180→  1130→              className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/60 px-4 py-2"
+   181→  1131→              role="toolbar"
+   182→  1132→              aria-label="Быстрый фильтр по протоколам"
+   183→  1133→            >
+   184→  1134→              <span className="mr-1 text-[10px] uppercase tracking-wider text-slate-500">
+   185→  1135→                Каналы:
+   186→  1136→              </span>
+   187→  1137→              {protoChips.map(([name, count]) => {
+   188→  1138→                const active = protocol === name;
+   189→  1139→                return (
+   190→  1140→                  <button
+   191→  1141→                    key={name}
+   192→  1142→                    type="button"
+   193→  1143→                    onClick={() => setProtocol(active ? "all" : name)}
+   194→  1144→                    aria-pressed={active}
+   195→  1145→                    className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+   196→  1146→                      active
+   197→  1147→                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200"
+   198→  1148→                        : "border-slate-700/70 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200"
+   199→  1149→                    }`}
+   200→  1150→                  >
+   201→  1151→                    <span className={`size-1.5 rounded-full ${protocolDot(name)}`} aria-hidden />
+   202→  1152→                    {name}
+   203→  1153→                    <span className="tabular-nums text-slate-500">{fmtCompact(count)}</span>
+   204→  1154→                  </button>
+   205→  1155→                );
+   206→  1156→              })}
+   207→  1157→            </div>
+   208→  1158→          )}
+   209→  1159→          <div className="max-h-[60vh] overflow-y-auto custom-scroll">
+   210→  1160→            <Table>
+   211→  1161→              <TableHeader className="sticky top-0 z-10 bg-slate-900 shadow-[0_1px_0_0_theme(colors.slate.800)]">
+   212→  1162→                <TableRow className="border-slate-800 hover:bg-transparent">
+   213→  1163→                  <TableHead className="pl-4 font-mono text-[11px] text-slate-500">Время</TableHead>
+   214→  1164→                  <TableHead className="text-[11px] text-slate-500">↕</TableHead>
+   215→  1165→                  <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
+   216→  1166→                  <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
+   217→  1167→                  <TableHead className="text-[11px] text-slate-500">Тип / метод</TableHead>
+   218→  1168→                  <TableHead className="text-right text-[11px] text-slate-500">Размер</TableHead>
+   219→  1169→                  <TableHead className="text-[11px] text-slate-500">Валид</TableHead>
+   220→  1170→                  <TableHead className="pr-4 text-[11px] text-slate-500">Резюме</TableHead>
+   221→  1171→                </TableRow>
+   222→  1172→              </TableHeader>
+   223→  1173→              <TableBody>
+   224→  1174→                {display.length === 0 ? (
+   225→  1175→                  <TableRow>
+   226→  1176→                    <TableCell colSpan={8} className="py-12 text-center">
+   227→  1177→                      <div className="flex flex-col items-center gap-2">
+   228→  1178→                        <Inbox className="size-8 text-slate-600" aria-hidden />
+   229→  1179→                        <span className="text-sm text-slate-400">
+   230→  1180→                          {connected ? "Пакетов по фильтру не найдено" : "Нет соединения с потоком сниффера"}
+   231→  1181→                        </span>
+   232→  1182→                        <span className="text-[11px] text-slate-600">
+   233→  1183→                          {connected
+   234→  1184→                            ? "Ослабьте фильтры или дождитесь новых пакетов — поток живёт"
+   235→  1185→                            : "Переподключение к /api/sniffer/stream…"}
+   236→  1186→                        </span>
+   237→  1187→                      </div>
+   238→  1188→                    </TableCell>
+   239→  1189→                  </TableRow>
+   240→  1190→                ) : (
+   241→  1191→                  display.map((p, idx) => (
+   242→  1192→                    <TableRow
+   243→  1193→                      key={p.id}
+   244→  1194→                      onClick={() => onRowClick(p)}
+   245→  1195→                      className={`cursor-pointer border-slate-800/70 hover:bg-slate-800/60 ${
+   246→  1196→                        !p.valid
+   247→  1197→                          ? "bg-red-500/[0.05]"
+   248→  1198→                          : idx % 2 === 1
+   249→  1199→                            ? "bg-slate-950/40"
+   250→  1200→                            : ""
+   251→  1201→                      }`}
+   252→  1202→                    >
+   253→  1203→                      <TableCell className="whitespace-nowrap py-2 pl-4 font-mono text-[11px] text-slate-400 tabular-nums">
+   254→  1204→                        {fmtTime(p.ts)}
+   255→  1205→                      </TableCell>
+   256→  1206→                      <TableCell className="py-2">
+   257→  1207→                        <DirBadge dir={p.direction} />
+   258→  1208→                      </TableCell>
+   259→  1209→                      <TableCell className="max-w-[130px] truncate py-2 text-xs text-slate-300" title={`${p.portName} · ${p.client}`}>
+   260→  1210→                        {p.portName}
+   261→  1211→                      </TableCell>
+   262→  1212→                      <TableCell className="py-2">
+   263→  1213→                        <Badge
+   264→  1214→                          variant="outline"
+   265→  1215→                          className={`px-1.5 py-0 font-mono text-[10px] ${protocolColor(p.protocol)}`}
+   266→  1216→                        >
+   267→  1217→                          {p.protocol}
+   268→  1218→                        </Badge>
+   269→  1219→                      </TableCell>
+   270→  1220→                      <TableCell className="max-w-[180px] truncate py-2 font-mono text-xs text-slate-200">
+   271→  1221→                        <Highlight text={p.methodType ?? p.method ?? p.msgType ?? "—"} query={search} />
+   272→  1222→                      </TableCell>
+   273→  1223→                      <TableCell className="whitespace-nowrap py-2 text-right font-mono text-xs text-slate-300 tabular-nums">
+   274→  1224→                        {fmtBytes(p.size)}
+   275→  1225→                      </TableCell>
+   276→  1226→                      <TableCell className="py-2">
+   277→  1227→                        {p.valid ? (
+   278→  1228→                          <CheckCircle2 className="size-4 text-emerald-500" aria-label="валидный" />
+   279→  1229→                        ) : (
+   280→  1230→                          <XCircle className="size-4 text-red-500" aria-label="невалидный" />
+   281→  1231→                        )}
+   282→  1232→                      </TableCell>
+   283→  1233→                      <TableCell className="max-w-[320px] truncate py-2 pr-4 text-xs text-slate-400" title={p.summary}>
+   284→  1234→                        <Highlight text={p.summary} query={search} />
+   285→  1235→                      </TableCell>
+   286→  1236→                    </TableRow>
+   287→  1237→                  ))
+   288→  1238→                )}
+   289→  1239→              </TableBody>
+   290→  1240→            </Table>
+   291→  1241→          </div>
+   292→  1242→          {/* Подгрузка истории пакетов */}
+   293→  1243→          {filtered.length > display.length && (
+   294→  1244→            <div className="flex flex-wrap items-center justify-center gap-2 border-t border-slate-800/60 px-4 py-2.5">
+   295→  1245→              <Button
+   296→  1246→                size="sm"
+   297→  1247→                variant="outline"
+   298→  1248→                onClick={() =>
+   299→  1249→                  setVisibleCount((c) => Math.min(c + MAX_TABLE_ROWS, filtered.length))
+   300→  1250→                }
+   301→  1251→                className="min-h-[36px] border-slate-700 bg-slate-950 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-300"
+   302→  1252→              >
+   303→  1253→                <ChevronDown className="size-3.5" aria-hidden />
+   304→  1254→                Показать ещё {Math.min(MAX_TABLE_ROWS, filtered.length - display.length)}
+   305→  1255→              </Button>
+   306→  1256→              <Button
+   307→  1257→                size="sm"
+   308→  1258→                variant="ghost"
+   309→  1259→                onClick={() => setVisibleCount(filtered.length)}
+   310→  1260→                className="min-h-[36px] px-2 text-[11px] text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+   311→  1261→              >
+   312→  1262→                показать все ({fmtCompact(filtered.length)})
+   313→  1263→              </Button>
+   314→  1264→            </div>
+   315→  1265→          )}
+   316→  1266→        </CardContent>
+   317→  1267→      </Card>
+   318→  1268→
+   319→  1269→      {/* Сессии + Тревоги */}
+   320→  1270→      <div className="grid gap-3 lg:grid-cols-2">
+   321→  1271→        <Card className="border-slate-800 bg-slate-900/60">
+   322→  1272→          <CardHeader className="flex-row items-center justify-between p-4 pb-2">
+   323→  1273→            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+   324→  1274→              Сессии
+   325→  1275→              <Badge
+   326→  1276→                variant="outline"
+   327→  1277→                className="border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0 font-mono text-[10px] text-emerald-400"
+   328→  1278→              >
+   329→  1279→                активных: {sessions.filter((s) => s.state === "active").length}
+   330→  1280→              </Badge>
+   331→  1281→            </CardTitle>
+   332→  1282→            <span className="text-[10px] text-slate-500">клик — инспектор сессии</span>
+   333→  1283→          </CardHeader>
+   334→  1284→          <CardContent className="p-0 pb-2">
+   335→  1285→            <div className="max-h-64 overflow-y-auto custom-scroll">
+   336→  1286→              <Table>
+   337→  1287→                <TableHeader>
+   338→  1288→                  <TableRow className="border-slate-800 hover:bg-transparent">
+   339→  1289→                    <TableHead className="pl-4 text-[11px] text-slate-500">Клиент</TableHead>
+   340→  1290→                    <TableHead className="text-[11px] text-slate-500">Канал</TableHead>
+   341→  1291→                    <TableHead className="text-[11px] text-slate-500">Протокол</TableHead>
+   342→  1292→                    <TableHead className="text-right text-[11px] text-slate-500">TX/RX пак.</TableHead>
+   343→  1293→                    <TableHead className="text-right text-[11px] text-slate-500">Байты</TableHead>
+   344→  1294→                    <TableHead className="text-[11px] text-slate-500">Время</TableHead>
+   345→  1295→                    <TableHead className="pr-4 text-[11px] text-slate-500">Состояние</TableHead>
+   346→  1296→                  </TableRow>
+   347→  1297→                </TableHeader>
+   348→  1298→                <TableBody>
+   349→  1299→                  {sessionList.length === 0 ? (
+   350→  1300→                    <TableRow>
+   351→  1301→                      <TableCell colSpan={7} className="py-6 text-center text-xs text-slate-500">
+   352→  1302→                        Нет сессий
+   353→  1303→                      </TableCell>
+   354→  1304→                    </TableRow>
+   355→  1305→                  ) : (
+   356→  1306→                    sessionList.map((s) => (
+   357→  1307→                      <TableRow
+   358→  1308→                        key={s.id}
+   359→  1309→                        onClick={() => {
+   360→  1310→                          setInspectorRaw(s);
+   361→  1311→                          setInspectorId(s.id);
+   362→  1312→                        }}
+   363→  1313→                        title="Открыть инспектор сессии — все пакеты в одном листе"
+   364→  1314→                        className="cursor-pointer border-slate-800/70 transition-colors hover:bg-emerald-500/5"
+   365→  1315→                      >
+   366→  1316→                        <TableCell className="py-2 pl-4 font-mono text-xs text-slate-200">
+   367→  1317→                          <span className="inline-flex items-center gap-1.5">
+   368→  1318→                            {s.client}
+   369→  1319→                            <Radio className="size-3 text-slate-600" aria-hidden />
+   370→  1320→                          </span>
+   371→  1321→                        </TableCell>
+   372→  1322→                        <TableCell className="max-w-[120px] truncate py-2 text-xs text-slate-300">
+   373→  1323→                          {s.portName}
+   374→  1324→                        </TableCell>
+   375→  1325→                        <TableCell className="py-2">
+   376→  1326→                          <Badge
+   377→  1327→                            variant="outline"
+   378→  1328→                            className={`px-1.5 py-0 font-mono text-[10px] ${protocolColor(s.protocol)}`}
+   379→  1329→                          >
+   380→  1330→                            {s.protocol}
+   381→  1331→                          </Badge>
+   382→  1332→                        </TableCell>
+   383→  1333→                        <TableCell className="whitespace-nowrap py-2 text-right font-mono text-[11px]">
+   384→  1334→                          <span className="text-emerald-400">{s.txPackets}</span>
+   385→  1335→                          <span className="text-slate-600"> / </span>
+   386→  1336→                          <span className="text-cyan-400">{s.rxPackets}</span>
+   387→  1337→                        </TableCell>
+   388→  1338→                        <TableCell className="whitespace-nowrap py-2 text-right font-mono text-[11px] text-slate-400">
+   389→  1339→                          {fmtBytes(s.txBytes + s.rxBytes)}
+   390→  1340→                        </TableCell>
+   391→  1341→                        <TableCell className="whitespace-nowrap py-2 font-mono text-[11px] text-slate-400">
+   392→  1342→                          {fmtClock(s.startedAt)}
+   393→  1343→                        </TableCell>
+   394→  1344→                        <TableCell className="py-2 pr-4">
+   395→  1345→                          <StateBadge state={s.state} />
+   396→  1346→                        </TableCell>
+   397→  1347→                      </TableRow>
+   398→  1348→                    ))
+   399→  1349→                  )}
+   400→  1350→                </TableBody>
+   401→  1351→              </Table>
+   402→  1352→            </div>
+   403→  1353→          </CardContent>
+   404→  1354→        </Card>
+   405→  1355→
+   406→  1356→        <Card className="border-slate-800 bg-slate-900/60">
+   407→  1357→          <CardHeader className="flex-row items-center justify-between p-4 pb-2">
+   408→  1358→            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+   409→  1359→              Тревоги
+   410→  1360→              {latestAlerts.some((a) => a.severity === "crit") && (
+   411→  1361→                <Badge
+   412→  1362→                  variant="outline"
+   413→  1363→                  className="border-red-500/40 bg-red-500/10 px-1.5 py-0 font-mono text-[10px] text-red-400"
+   414→  1364→                >
+   415→  1365→                  crit: {latestAlerts.filter((a) => a.severity === "crit").length}
+   416→  1366→                </Badge>
+   417→  1367→              )}
+   418→  1368→            </CardTitle>
+   419→  1369→            <div className="flex items-center gap-2">
+   420→  1370→              <Button
+   421→  1371→                size="sm"
+   422→  1372→                variant="ghost"
+   423→  1373→                onClick={() => setJournalOpen(true)}
+   424→  1374→                title="Персистентный журнал тревог из SQLite — история, переживающая сброс буфера"
+   425→  1375→                className="h-8 gap-1.5 px-2 text-[11px] text-cyan-400/90 hover:bg-cyan-500/10 hover:text-cyan-300"
+   426→  1376→              >
+   427→  1377→                <Database className="size-3.5" aria-hidden />
+   428→  1378→                Журнал
+   429→  1379→                {stats && (
+   430→  1380→                  <span className="font-mono text-[10px] text-slate-500 tabular-nums">
+   431→  1381→                    {stats.alertsCount}
+   432→  1382→                  </span>
+   433→  1383→                )}
+   434→  1384→              </Button>
+   435→  1385→              <span
+   436→  1386→                role="separator"
+   437→  1387→                aria-orientation="vertical"
+   438→  1388→                className="h-5 w-px bg-slate-800"
+   439→  1389→              />
+   440→  1390→              <Button
+   441→  1391→                size="sm"
+   442→  1392→                variant="ghost"
+   443→  1393→                onClick={handleSoundToggle}
+   444→  1394→                aria-pressed={soundOn}
+   445→  1395→                aria-label={soundOn ? "Выключить звук критических тревог" : "Включить звук критических тревог"}
+   446→  1396→                title={soundOn ? "Звук CRIT-тревог: вкл" : "Звук CRIT-тревог: выкл"}
+   447→  1397→                className={`h-8 w-8 p-0 ${
+   448→  1398→                  soundOn
+   449→  1399→                    ? "text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+   450→  1400→                    : "text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+   451→  1401→                }`}
+   452→  1402→              >
+   453→  1403→                {soundOn ? (
+   454→  1404→                  <Volume2 className="size-4" aria-hidden />
+   455→  1405→                ) : (
+   456→  1406→                  <VolumeX className="size-4" aria-hidden />
+   457→  1407→                )}
+   458→  1408→              </Button>
+   459→  1409→              <span
+   460→  1410→                role="separator"
+   461→  1411→                aria-orientation="vertical"
+   462→  1412→                className="h-5 w-px bg-slate-800"
+   463→  1413→              />
+   464→  1414→              {muted ? (
+   465→  1415→                <BellOff className="size-4 text-slate-500" aria-hidden />
+   466→  1416→              ) : (
+   467→  1417→                <Bell className="size-4 text-emerald-400" aria-hidden />
+   468→  1418→              )}
+   469→  1419→              <Switch
+   470→  1420→                checked={muted}
+   471→  1421→                onCheckedChange={(v) => {
+   472→  1422→                  setMuted(v);
+   473→  1423→                  toast(v ? "Уведомления тревог выключены" : "Уведомления тревог включены", {
+   474→  1424→                    description: v
+   475→  1425→                      ? "Алерты по-прежнему фиксируются в журнале и БД."
+   476→  1426→                      : "Критические тревоги будут всплывать как уведомления.",
+   477→  1427→                    duration: 2500,
+   478→  1428→                  });
+   479→  1429→                }}
+   480→  1430→                aria-label="Выключить уведомления тревог"
+   481→  1431→              />
+   482→  1432→            </div>
+   483→  1433→          </CardHeader>
+   484→  1434→          <CardContent className="p-0 pb-2">
+   485→  1435→            {/* Распределение тревог по правилам */}
+   486→  1436→            {ruleDist.items.length > 0 && (
+   487→  1437→              <div className="border-b border-slate-800/60 px-4 py-2.5">
+   488→  1438→                <div
+   489→  1439→                  className="mb-2 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800"
+   490→  1440→                  role="img"
+   491→  1441→                  aria-label={`Распределение последних ${ruleDist.total} тревог по правилам: ${ruleDist.items
+   492→  1442→                    .map((it) => `${it.rule} — ${it.n}`)
+   493→  1443→                    .join(", ")}`}
+   494→  1444→                >
+   495→  1445→                  {ruleDist.items.map((it) => (
+   496→  1446→                    <div
+   497→  1447→                      key={it.rule}
+   498→  1448→                      className={it.cls}
+   499→  1449→                      style={{ flexBasis: `${Math.max(2, (it.n / ruleDist.total) * 100)}%` }}
+   500→  1450→                      title={`${it.rule}: ${it.n}`}
+   501→  1451→                    />
+   502→  1452→                  ))}
+   503→  1453→                </div>
+   504→  1454→                <div className="flex flex-wrap gap-x-3 gap-y-1">
+   505→  1455→                  {ruleDist.items.map((it) => (
+   506→  1456→                    <span key={it.rule} className="inline-flex items-center gap-1.5 text-[10px] text-slate-400">
+   507→  1457→                      <span className={`size-1.5 rounded-full ${it.cls}`} aria-hidden />
+   508→  1458→                      <span className="max-w-[150px] truncate">{it.rule}</span>
+   509→  1459→                      <span className="tabular-nums text-slate-500">{it.n}</span>
+   510→  1460→                    </span>
+   511→  1461→                  ))}
+   512→  1462→                </div>
+   513→  1463→              </div>
+   514→  1464→            )}
+   515→  1465→            <div className="max-h-64 overflow-y-auto custom-scroll">
+   516→  1466→              <Table>
+   517→  1467→                <TableHeader>
+   518→  1468→                  <TableRow className="border-slate-800 hover:bg-transparent">
+   519→  1469→                    <TableHead className="pl-4 text-[11px] text-slate-500">Ур.</TableHead>
+   520→  1470→                    <TableHead className="text-[11px] text-slate-500">Правило</TableHead>
+   521→  1471→                    <TableHead className="text-[11px] text-slate-500">Сообщение</TableHead>
+   522→  1472→                    <TableHead className="text-[11px] text-slate-500">Клиент</TableHead>
+   523→  1473→                    <TableHead className="pr-4 text-[11px] text-slate-500">Время</TableHead>
+   524→  1474→                  </TableRow>
+   525→  1475→                </TableHeader>
+   526→  1476→                <TableBody>
+   527→  1477→                  {latestAlerts.length === 0 ? (
+   528→  1478→                    <TableRow>
+   529→  1479→                      <TableCell colSpan={5} className="py-6 text-center text-xs text-slate-500">
+   530→  1480→                        Тревог пока нет — трафик штатный
+   531→  1481→                      </TableCell>
+   532→  1482→                    </TableRow>
+   533→  1483→                  ) : (
+   534→  1484→                    latestAlerts.map((a) => (
+   535→  1485→                      <AlertRow key={a.id} alert={a} onOpenPacket={openPacketById} />
+   536→  1486→                    ))
+   537→  1487→                  )}
+   538→  1488→                </TableBody>
+   539→  1489→              </Table>
+   540→  1490→            </div>
+   541→  1491→          </CardContent>
+   542→  1492→        </Card>
+   543→  1493→      </div>
+   544→  1494→
+   545→  1495→      {/* Плавающая пилюля «новые пакеты» при паузе — портал в body, чтобы fixed
+   546→  1496→          не ломался transform-предком (framer-motion на вкладке) */}
+   547→  1497→      {paused &&
+   548→  1498→        newWhilePaused > 0 &&
+   549→  1499→        createPortal(
+   550→  1500→          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+   551→  1501→            <div className="pointer-events-auto flex animate-in items-center gap-3 rounded-full border border-emerald-500/50 bg-slate-950/95 py-1.5 pl-4 pr-1.5 shadow-[0_10px_36px_-8px] shadow-emerald-500/45 fade-in slide-in-from-bottom-3 duration-300">
+   552→  1502→              <span className="relative flex size-2">
+   553→  1503→                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+   554→  1504→                <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+   555→  1505→              </span>
+   556→  1506→              <span className="whitespace-nowrap text-xs text-slate-200">
+   557→  1507→                <span className="font-semibold text-emerald-300 tabular-nums">
+   558→  1508→                  {fmtCompact(newWhilePaused)}
+   559→  1509→                </span>{" "}
+   560→  1510→                новых пакетов в фоне
+   561→  1511→              </span>
+   562→  1512→              <Button
+   563→  1513→                size="sm"
+   564→  1514→                onClick={jumpToFresh}
+   565→  1515→                className="h-7 gap-1 rounded-full bg-emerald-500 px-3 text-xs font-medium text-slate-950 hover:bg-emerald-400"
+   566→  1516→              >
+   567→  1517→                <ArrowDownToLine className="size-3.5" aria-hidden />
+   568→  1518→                Перейти к свежим
+   569→  1519→              </Button>
+   570→  1520→            </div>
+   571→  1521→          </div>,
+   572→  1522→          document.body
+   573→  1523→        )}
+   574→  1524→
+   575→  1525→      <PacketDetailSheet
+   576→  1526→        packet={selected}
+   577→  1527→        pendingId={pendingId}
+   578→  1528→        open={sheetOpen}
+   579→  1529→        onOpenChange={setSheetOpen}
+   580→  1530→        detail={detail}
+   581→  1531→        loading={detailLoading}
+   582→  1532→      />
+   583→  1533→
+   584→  1534→      <SessionInspector
+   585→  1535→        key={inspectorId ?? "none"}
+   586→  1536→        session={inspectorSession}
+   587→  1537→        open={inspectorSession !== null}
+   588→  1538→        onOpenChange={(v) => {
+   589→  1539→          if (!v) {
+   590→  1540→            setInspectorId(null);
+   591→  1541→            setInspectorRaw(null);
+   592→  1542→          }
+   593→  1543→        }}
+   594→  1544→        livePackets={packets}
+   595→  1545→        onFilterByClient={filterByClient}
+   596→  1546→      />
+   597→  1547→
+   598→  1548→      <AlertsJournal
+   599→  1549→        open={journalOpen}
+   600→  1550→        onOpenChange={setJournalOpen}
+   601→  1551→        onOpenPacket={openPacketById}
+   602→  1552→      />
+   603→  1553→    </div>
+   604→  1554→  );
+   605→  1555→}
+   606→  1556→
+   607→  1557→/** Итоги сценария: дельты счётчиков за окно генерации. Скрытие — локальное состояние, сбрасывается сменой key. */
+   608→  1558→function ScenarioResults({ result }: { result: ScenarioResult }) {
+   609→  1559→  const [hidden, setHidden] = useState(false);
+   610→  1560→  if (hidden) return null;
+   611→  1561→  const pps = Math.round((result.packets / result.durationSec) * 10) / 10;
+   612→  1562→  return (
+   613→  1563→    <div
+   614→  1564→      role="status"
+   615→  1565→      aria-label={`Итоги сценария ${result.label}`}
+   616→  1566→      className="mx-4 mb-4 animate-in rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] p-3 fade-in slide-in-from-bottom-2 duration-300"
+   617→  1567→    >
+   618→  1568→      <div className="flex flex-wrap items-center justify-between gap-2">
+   619→  1569→        <span className="flex items-center gap-2 text-xs font-medium text-slate-200">
+   620→  1570→          <ScenarioDone className="size-3.5 text-emerald-400" aria-hidden />
+   621→  1571→          Итоги сценария «{result.label}»
+   622→  1572→          <Badge
+   623→  1573→            variant="outline"
+   624→  1574→            className="border-slate-700 px-1.5 py-0 font-mono text-[10px] text-slate-400"
+   625→  1575→          >
+   626→  1576→            {result.durationSec}с
+   627→  1577→          </Badge>
+   628→  1578→        </span>
+   629→  1579→        <button
+   630→  1580→          type="button"
+   631→  1581→          onClick={() => setHidden(true)}
+   632→  1582→          aria-label="Скрыть итоги сценария"
+   633→  1583→          className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+   634→  1584→        >
+   635→  1585→          <X className="size-3.5" aria-hidden />
+   636→  1586→        </button>
+   637→  1587→      </div>
+   638→  1588→      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+   639→  1589→        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+   640→  1590→          <Activity className="size-3 text-emerald-400" aria-hidden />
+   641→  1591→          <span className="font-semibold text-emerald-300 tabular-nums">+{fmtCompact(result.packets)}</span> пакетов
+   642→  1592→          <span className="text-slate-500">· {pps}/с</span>
+   643→  1593→        </span>
+   644→  1594→        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+   645→  1595→          <HardDrive className="size-3 text-cyan-400" aria-hidden />
+   646→  1596→          <span className="font-semibold text-cyan-300 tabular-nums">+{fmtBytes(result.bytes)}</span>
+   647→  1597→        </span>
+   648→  1598→        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+   649→  1599→          <Siren className="size-3 text-red-400" aria-hidden />
+   650→  1600→          <span className="font-semibold text-red-300 tabular-nums">+{result.alerts}</span> тревог
+   651→  1601→        </span>
+   652→  1602→        {result.invalid > 0 && (
+   653→  1603→          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+   654→  1604→            <XCircle className="size-3 text-amber-400" aria-hidden />
+   655→  1605→            <span className="tabular-nums">{result.invalid}</span> невалидных
+   656→  1606→          </span>
+   657→  1607→        )}
+   658→  1608→      </div>
+   659→  1609→    </div>
+   660→  1610→  );
+   661→  1611→}
+   662→  1612→
+   663→  1613→function AlertRow({ alert, onOpenPacket }: { alert: Alert; onOpenPacket: (id: number) => void }) {
+   664→  1614→  const clickable = alert.packetId != null;
+   665→  1615→  return (
+   666→  1616→    <TableRow
+   667→  1617→      onClick={clickable ? () => onOpenPacket(alert.packetId!) : undefined}
+   668→  1618→      title={clickable ? `Открыть пакет #${alert.packetId}` : undefined}
+   669→  1619→      className={`border-slate-800/70 ${clickable ? "cursor-pointer transition-colors hover:bg-amber-500/5" : ""}`}
+   670→  1620→    >
+   671→  1621→      <TableCell className="py-2 pl-4">
+   672→  1622→        <SeverityBadge severity={alert.severity} />
+   673→  1623→      </TableCell>
+   674→  1624→      <TableCell className="max-w-[140px] truncate py-2 text-xs font-medium text-slate-200">
+   675→  1625→        <span className="inline-flex items-center gap-1.5">
+   676→  1626→          {alert.rule}
+   677→  1627→          {clickable && <FileSearch className="size-3 shrink-0 text-slate-600" aria-hidden />}
+   678→  1628→        </span>
+   679→  1629→      </TableCell>
+   680→  1630→      <TableCell className="max-w-[280px] truncate py-2 text-xs text-slate-400">
+   681→  1631→        {alert.message}
+   682→  1632→      </TableCell>
+   683→  1633→      <TableCell className="max-w-[130px] truncate py-2 font-mono text-[11px] text-slate-400">
+   684→  1634→        {alert.client ?? "—"}
+   685→  1635→      </TableCell>
+   686→  1636→      <TableCell className="whitespace-nowrap py-2 pr-4 font-mono text-[11px] text-slate-400 tabular-nums">
+   687→  1637→        {fmtTime(alert.createdAt)}
+   688→  1638→      </TableCell>
+   689→  1639→    </TableRow>
+   690→  1640→  );
+   691→  1641→}
+   692→  1642→
+   693→  1643→export function SnifferTabSkeleton() {
+   694→  1644→  return (
+   695→  1645→    <div className="space-y-4">
+   696→  1646→      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+   697→  1647→        {Array.from({ length: 4 }).map((_, i) => (
+   698→  1648→          <Skeleton key={i} className="h-[76px] rounded-lg bg-slate-800/60" />
+   699→  1649→        ))}
+   700→  1650→      </div>
+   701→  1651→      <Skeleton className="h-[200px] rounded-lg bg-slate-800/60" />
+   702→  1652→      <Skeleton className="h-[120px] rounded-lg bg-slate-800/60" />
+   703→  1653→      <Skeleton className="h-[320px] rounded-lg bg-slate-800/60" />
+   704→  1654→    </div>
+   705→  1655→  );
+   706→  1656→}
+   707→  1657→
