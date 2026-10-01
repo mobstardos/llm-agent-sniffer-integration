@@ -65,6 +65,18 @@ export interface ScenarioDef {
   durationSec: number;
 }
 
+/** Итоги завершённого сценария: дельты счётчиков за окно сценария. */
+export interface ScenarioResult {
+  id: string;
+  label: string;
+  startedAt: string;
+  durationSec: number;
+  packets: number;
+  bytes: number;
+  alerts: number;
+  invalid: number;
+}
+
 export interface SnifferStats {
   startedAt: string;
   uptimeSec: number;
@@ -96,6 +108,7 @@ export interface SnifferLiveState {
   stats: SnifferStats | null;
   series: SeriesPoint[];
   scenario: ScenarioState | null;
+  scenarioResult: ScenarioResult | null;
   retrySec: number | null;
 }
 
@@ -116,6 +129,7 @@ export function useSnifferStream(): SnifferLiveState {
     stats: null,
     series: [],
     scenario: null,
+    scenarioResult: null,
     retrySec: null,
   });
 
@@ -131,6 +145,16 @@ export function useSnifferStream(): SnifferLiveState {
   const statsBufRef = useRef<SnifferStats | null>(null);
   const seriesBufRef = useRef<SeriesPoint[]>([]);
   const scenarioBufRef = useRef<ScenarioState | null | undefined>(undefined);
+  // Окно активного сценария: снапшот счётчиков на старте — для расчёта дельт на завершении
+  const scenarioStartRef = useRef<{
+    id: string;
+    label: string;
+    at: string;
+    packets: number;
+    bytes: number;
+    alerts: number;
+    invalid: number;
+  } | null>(null);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dirtyRef = useRef(false);
 
@@ -277,10 +301,40 @@ export function useSnifferStream(): SnifferLiveState {
 
       es.addEventListener("scenario", (e) => {
         try {
-          scenarioBufRef.current = JSON.parse(
-            (e as MessageEvent).data
-          ) as ScenarioState | null;
+          const sc = JSON.parse((e as MessageEvent).data) as ScenarioState | null;
+          scenarioBufRef.current = sc;
           dirtyRef.current = true;
+          if (sc) {
+            // старт сценария: фиксируем срез счётчиков
+            const st = statsBufRef.current;
+            scenarioStartRef.current = {
+              id: sc.id,
+              label: sc.label,
+              at: new Date().toISOString(),
+              packets: st?.totalPackets ?? 0,
+              bytes: st?.totalBytes ?? 0,
+              alerts: st?.alertsCount ?? 0,
+              invalid: st?.invalidPackets ?? 0,
+            };
+          } else {
+            // завершение сценария: считаем дельты и публикуем итог
+            const start = scenarioStartRef.current;
+            scenarioStartRef.current = null;
+            if (start) {
+              const st = statsBufRef.current;
+              const result: ScenarioResult = {
+                id: start.id,
+                label: start.label,
+                startedAt: start.at,
+                durationSec: Math.max(1, Math.round((Date.now() - new Date(start.at).getTime()) / 1000)),
+                packets: Math.max(0, (st?.totalPackets ?? 0) - start.packets),
+                bytes: Math.max(0, (st?.totalBytes ?? 0) - start.bytes),
+                alerts: Math.max(0, (st?.alertsCount ?? 0) - start.alerts),
+                invalid: Math.max(0, (st?.invalidPackets ?? 0) - start.invalid),
+              };
+              setState((prev) => ({ ...prev, scenarioResult: result }));
+            }
+          }
         } catch {
           /* noop */
         }

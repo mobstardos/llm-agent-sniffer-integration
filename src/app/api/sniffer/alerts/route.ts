@@ -7,13 +7,81 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/sniffer/alerts?limit=
- * Живой ring сниффера объединяется с персистентными записями Prisma
- * (аналог capture/alerts.jsonl в реальном сниффере). Новые первыми.
+ *   Живой ring сниффера объединяется с персистентными записями Prisma
+ *   (аналог capture/alerts.jsonl в реальном сниффере). Новые первыми.
+ *
+ * GET /api/sniffer/alerts?history=1&limit=50&offset=0[&severity=crit|warn|info]
+ *   Журнал из SQLite (только персистентные записи) с пагинацией по offset,
+ *   фильтром по severity и счётчиками по уровням. Аналог чтения журнала
+ *   реального сниффера после ротации живого ring.
  */
+
+interface JournalAlert {
+  id: string;
+  rule: string;
+  severity: string;
+  message: string;
+  protocol: string | null;
+  client: string | null;
+  packetId: number | null;
+  createdAt: string;
+  source: "live" | "db";
+}
+
 export async function GET(req: NextRequest) {
   ensureRunning();
+  const sp = req.nextUrl.searchParams;
+
+  // ── Режим журнала: постраничная история из БД ──────────────────────────
+  if (sp.get("history")) {
+    const limit = Math.min(Math.max(parseInt(sp.get("limit") ?? "50", 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(sp.get("offset") ?? "0", 10) || 0, 0);
+    const severity = sp.get("severity") ?? "";
+    const severityOk = ["crit", "warn", "info"].includes(severity) ? severity : undefined;
+
+    const where = severityOk ? { severity: severityOk } : {};
+    try {
+      const [rows, total, crit, warn, info] = await Promise.all([
+        db.snifferAlert.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          take: limit,
+          skip: offset,
+        }),
+        db.snifferAlert.count({ where }),
+        db.snifferAlert.count({ where: { severity: "crit" } }),
+        db.snifferAlert.count({ where: { severity: "warn" } }),
+        db.snifferAlert.count({ where: { severity: "info" } }),
+      ]);
+      const alerts: JournalAlert[] = rows.map((a) => ({
+        id: a.id,
+        rule: a.rule,
+        severity: a.severity,
+        message: a.message,
+        protocol: a.protocol,
+        client: a.client,
+        packetId: a.packetId,
+        createdAt: a.createdAt.toISOString(),
+        source: "db" as const,
+      }));
+      return NextResponse.json({
+        alerts,
+        total,
+        counts: { crit, warn, info },
+        limit,
+        offset,
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Журнал недоступен — БД не отвечает" },
+        { status: 503 }
+      );
+    }
+  }
+
+  // ── Обычный режим: live ring + БД (как раньше) ─────────────────────────
   const limit = Math.min(
-    Math.max(parseInt(req.nextUrl.searchParams.get("limit") ?? "100", 10) || 100, 1),
+    Math.max(parseInt(sp.get("limit") ?? "100", 10) || 100, 1),
     500
   );
 

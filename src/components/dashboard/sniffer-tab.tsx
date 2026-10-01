@@ -29,6 +29,8 @@ import {
   X,
   ArrowDownToLine,
   Filter,
+  Database,
+  CheckCircle2 as ScenarioDone,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,11 +70,13 @@ import {
   type Alert,
   type Session,
   type SnifferStats,
+  type ScenarioResult,
 } from "@/hooks/use-sniffer-stream";
 import { PpsChart, type ChartMetric } from "@/components/dashboard/pps-chart";
 import { ProtocolBreakdown } from "@/components/dashboard/protocol-breakdown";
 import { Sparkline } from "@/components/dashboard/sparkline";
 import { SessionInspector } from "@/components/dashboard/session-inspector";
+import { AlertsJournal } from "@/components/dashboard/alerts-journal";
 import { playCritBeep, playConfirmBlip } from "@/lib/sound";
 import {
   fmtBytes,
@@ -368,7 +372,7 @@ function PacketDetailSheet({
 }
 
 export function SnifferTab({ live }: SnifferTabProps) {
-  const { connected, packets, sessions, alerts, stats, series, scenario } = live;
+  const { connected, packets, sessions, alerts, stats, series, scenario, scenarioResult } = live;
 
   // Фильтры
   const [search, setSearch] = useState("");
@@ -392,6 +396,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [inspectorRaw, setInspectorRaw] = useState<Session | null>(null);
   const [inspectorId, setInspectorId] = useState<string | null>(null);
   const [soundOn, setSoundOn] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MAX_TABLE_ROWS);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tableCardRef = useRef<HTMLDivElement>(null);
@@ -782,6 +787,10 @@ export function SnifferTab({ live }: SnifferTabProps) {
             </Button>
           )}
         </CardContent>
+        {/* Итоги последнего сценария — дельты за окно генерации (key → новый сценарий сбрасывает скрытие) */}
+        {scenarioResult && (
+          <ScenarioResults key={scenarioResult.startedAt} result={scenarioResult} />
+        )}
       </Card>
 
       {/* График */}
@@ -1197,7 +1206,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                       <TableCell className="py-2">
                         <DirBadge dir={p.direction} />
                       </TableCell>
-                      <TableCell className="max-w-[130px] truncate py-2 text-xs text-slate-300">
+                      <TableCell className="max-w-[130px] truncate py-2 text-xs text-slate-300" title={`${p.portName} · ${p.client}`}>
                         {p.portName}
                       </TableCell>
                       <TableCell className="py-2">
@@ -1221,7 +1230,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                           <XCircle className="size-4 text-red-500" aria-label="невалидный" />
                         )}
                       </TableCell>
-                      <TableCell className="max-w-[320px] truncate py-2 pr-4 text-xs text-slate-400">
+                      <TableCell className="max-w-[320px] truncate py-2 pr-4 text-xs text-slate-400" title={p.summary}>
                         <Highlight text={p.summary} query={search} />
                       </TableCell>
                     </TableRow>
@@ -1358,6 +1367,26 @@ export function SnifferTab({ live }: SnifferTabProps) {
               )}
             </CardTitle>
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setJournalOpen(true)}
+                title="Персистентный журнал тревог из SQLite — история, переживающая сброс буфера"
+                className="h-8 gap-1.5 px-2 text-[11px] text-cyan-400/90 hover:bg-cyan-500/10 hover:text-cyan-300"
+              >
+                <Database className="size-3.5" aria-hidden />
+                Журнал
+                {stats && (
+                  <span className="font-mono text-[10px] text-slate-500 tabular-nums">
+                    {stats.alertsCount}
+                  </span>
+                )}
+              </Button>
+              <span
+                role="separator"
+                aria-orientation="vertical"
+                className="h-5 w-px bg-slate-800"
+              />
               <Button
                 size="sm"
                 variant="ghost"
@@ -1515,6 +1544,68 @@ export function SnifferTab({ live }: SnifferTabProps) {
         livePackets={packets}
         onFilterByClient={filterByClient}
       />
+
+      <AlertsJournal
+        open={journalOpen}
+        onOpenChange={setJournalOpen}
+        onOpenPacket={openPacketById}
+      />
+    </div>
+  );
+}
+
+/** Итоги сценария: дельты счётчиков за окно генерации. Скрытие — локальное состояние, сбрасывается сменой key. */
+function ScenarioResults({ result }: { result: ScenarioResult }) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  const pps = Math.round((result.packets / result.durationSec) * 10) / 10;
+  return (
+    <div
+      role="status"
+      aria-label={`Итоги сценария ${result.label}`}
+      className="mx-4 mb-4 animate-in rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] p-3 fade-in slide-in-from-bottom-2 duration-300"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-xs font-medium text-slate-200">
+          <ScenarioDone className="size-3.5 text-emerald-400" aria-hidden />
+          Итоги сценария «{result.label}»
+          <Badge
+            variant="outline"
+            className="border-slate-700 px-1.5 py-0 font-mono text-[10px] text-slate-400"
+          >
+            {result.durationSec}с
+          </Badge>
+        </span>
+        <button
+          type="button"
+          onClick={() => setHidden(true)}
+          aria-label="Скрыть итоги сценария"
+          className="flex size-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <Activity className="size-3 text-emerald-400" aria-hidden />
+          <span className="font-semibold text-emerald-300 tabular-nums">+{fmtCompact(result.packets)}</span> пакетов
+          <span className="text-slate-500">· {pps}/с</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <HardDrive className="size-3 text-cyan-400" aria-hidden />
+          <span className="font-semibold text-cyan-300 tabular-nums">+{fmtBytes(result.bytes)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+          <Siren className="size-3 text-red-400" aria-hidden />
+          <span className="font-semibold text-red-300 tabular-nums">+{result.alerts}</span> тревог
+        </span>
+        {result.invalid > 0 && (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+            <XCircle className="size-3 text-amber-400" aria-hidden />
+            <span className="tabular-nums">{result.invalid}</span> невалидных
+          </span>
+        )}
+      </div>
     </div>
   );
 }
