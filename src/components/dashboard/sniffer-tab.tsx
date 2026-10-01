@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Bell,
   BellOff,
@@ -26,6 +27,7 @@ import {
   VolumeX,
   ChevronDown,
   X,
+  ArrowDownToLine,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -151,6 +153,33 @@ function DirBadge({ dir }: { dir: "TX" | "RX" }) {
     >
       {dir === "TX" ? "↑ TX" : "↓ RX"}
     </Badge>
+  );
+}
+
+/** Подсветка совпадений поиска (без мутаций — чистый split по regex). */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let parts: string[];
+  try {
+    parts = text.split(new RegExp(`(${escaped})`, "ig"));
+  } catch {
+    return <>{text}</>;
+  }
+  const lower = q.toLowerCase();
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === lower ? (
+          <mark key={i} className="rounded-[3px] bg-emerald-500/25 px-0.5 text-emerald-200">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
   );
 }
 
@@ -312,6 +341,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const [maxSize, setMaxSize] = useState("");
   const [paused, setPaused] = useState(false);
   const [frozenPackets, setFrozenPackets] = useState<Packet[] | null>(null);
+  const [frozenTopId, setFrozenTopId] = useState(0);
   const [muted, setMuted] = useState(false);
   const [selected, setSelected] = useState<Packet | null>(null);
   const [pendingId, setPendingId] = useState<number | null>(null);
@@ -410,6 +440,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
   const handlePause = () => {
     if (!paused) {
       setFrozenPackets(packets);
+      setFrozenTopId(packets[0]?.id ?? 0);
       setPaused(true);
       toast.info("Таблица остановлена", {
         description: "Приём пакетов продолжается в фоне (буфер 3000).",
@@ -417,8 +448,17 @@ export function SnifferTab({ live }: SnifferTabProps) {
       });
     } else {
       setFrozenPackets(null);
+      setFrozenTopId(0);
       setPaused(false);
     }
+  };
+
+  // «Перейти к свежим» с плавающей пилюли — снять паузу и проскроллить к таблице
+  const jumpToFresh = () => {
+    setFrozenPackets(null);
+    setFrozenTopId(0);
+    setPaused(false);
+    tableCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   // Горячие клавиши вкладки: P — пауза, / — фокус на поиск
@@ -515,6 +555,16 @@ export function SnifferTab({ live }: SnifferTabProps) {
     });
   }, [packets, frozenPackets, paused, search, protocol, direction, minSize, maxSize]);
 
+  // Новые пакеты, пришедшие в фоне, пока таблица на паузе
+  const newWhilePaused = useMemo(() => {
+    if (!paused) return 0;
+    let n = 0;
+    for (const p of packets) {
+      if (p.id > frozenTopId) n += 1;
+    }
+    return n;
+  }, [paused, packets, frozenTopId]);
+
   const display = filtered.slice(0, visibleCount);
   const latestAlerts = alerts.slice(0, 50);
   const sessionList = sessions.slice(0, 12);
@@ -537,6 +587,19 @@ export function SnifferTab({ live }: SnifferTabProps) {
     if (!stats) return [] as [string, number][];
     return Object.entries(stats.perProtocol).sort((a, b) => b[1] - a[1]);
   }, [stats]);
+
+  // Распределение тревог по правилам — мини-бар в шапке карточки «Тревоги»
+  const ruleDist = useMemo(() => {
+    const latest = alerts.slice(0, 50);
+    const m = new Map<string, number>();
+    for (const a of latest) m.set(a.rule, (m.get(a.rule) ?? 0) + 1);
+    const palette = ["bg-red-500/80", "bg-amber-500/80", "bg-violet-500/80"];
+    const entries = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    const items = entries.slice(0, 3).map(([rule, n], i) => ({ rule, n, cls: palette[i] }));
+    const rest = entries.slice(3).reduce((acc, [, n]) => acc + n, 0);
+    if (rest > 0) items.push({ rule: "другие правила", n: rest, cls: "bg-slate-500/80" });
+    return { items, total: latest.length };
+  }, [alerts]);
 
   // Активные фильтры → чипы с быстрым сбросом
   const chips = useMemo(() => {
@@ -562,9 +625,14 @@ export function SnifferTab({ live }: SnifferTabProps) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
+      {/* Декоративное свечение вверху вкладки */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 -top-6 z-0 h-44 bg-[radial-gradient(55%_60%_at_50%_0%,rgba(16,185,129,0.09),transparent_70%)]"
+      />
       {/* Статбар */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="relative grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           icon={Activity}
           label="Пакеты всего"
@@ -1041,7 +1109,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-[180px] truncate py-2 font-mono text-xs text-slate-200">
-                        {p.methodType ?? p.method ?? p.msgType ?? "—"}
+                        <Highlight text={p.methodType ?? p.method ?? p.msgType ?? "—"} query={search} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap py-2 text-right font-mono text-xs text-slate-300 tabular-nums">
                         {fmtBytes(p.size)}
@@ -1054,7 +1122,7 @@ export function SnifferTab({ live }: SnifferTabProps) {
                         )}
                       </TableCell>
                       <TableCell className="max-w-[320px] truncate py-2 pr-4 text-xs text-slate-400">
-                        {p.summary}
+                        <Highlight text={p.summary} query={search} />
                       </TableCell>
                     </TableRow>
                   ))
@@ -1235,6 +1303,36 @@ export function SnifferTab({ live }: SnifferTabProps) {
             </div>
           </CardHeader>
           <CardContent className="p-0 pb-2">
+            {/* Распределение тревог по правилам */}
+            {ruleDist.items.length > 0 && (
+              <div className="border-b border-slate-800/60 px-4 py-2.5">
+                <div
+                  className="mb-2 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-800"
+                  role="img"
+                  aria-label={`Распределение последних ${ruleDist.total} тревог по правилам: ${ruleDist.items
+                    .map((it) => `${it.rule} — ${it.n}`)
+                    .join(", ")}`}
+                >
+                  {ruleDist.items.map((it) => (
+                    <div
+                      key={it.rule}
+                      className={it.cls}
+                      style={{ flexBasis: `${Math.max(2, (it.n / ruleDist.total) * 100)}%` }}
+                      title={`${it.rule}: ${it.n}`}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {ruleDist.items.map((it) => (
+                    <span key={it.rule} className="inline-flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <span className={`size-1.5 rounded-full ${it.cls}`} aria-hidden />
+                      <span className="max-w-[150px] truncate">{it.rule}</span>
+                      <span className="tabular-nums text-slate-500">{it.n}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="max-h-64 overflow-y-auto custom-scroll">
               <Table>
                 <TableHeader>
@@ -1264,6 +1362,36 @@ export function SnifferTab({ live }: SnifferTabProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Плавающая пилюля «новые пакеты» при паузе — портал в body, чтобы fixed
+          не ломался transform-предком (framer-motion на вкладке) */}
+      {paused &&
+        newWhilePaused > 0 &&
+        createPortal(
+          <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+            <div className="pointer-events-auto flex animate-in items-center gap-3 rounded-full border border-emerald-500/50 bg-slate-950/95 py-1.5 pl-4 pr-1.5 shadow-[0_10px_36px_-8px] shadow-emerald-500/45 fade-in slide-in-from-bottom-3 duration-300">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+              </span>
+              <span className="whitespace-nowrap text-xs text-slate-200">
+                <span className="font-semibold text-emerald-300 tabular-nums">
+                  {fmtCompact(newWhilePaused)}
+                </span>{" "}
+                новых пакетов в фоне
+              </span>
+              <Button
+                size="sm"
+                onClick={jumpToFresh}
+                className="h-7 gap-1 rounded-full bg-emerald-500 px-3 text-xs font-medium text-slate-950 hover:bg-emerald-400"
+              >
+                <ArrowDownToLine className="size-3.5" aria-hidden />
+                Перейти к свежим
+              </Button>
+            </div>
+          </div>,
+          document.body
+        )}
 
       <PacketDetailSheet
         packet={selected}

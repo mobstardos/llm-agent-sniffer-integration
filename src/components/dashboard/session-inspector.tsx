@@ -8,10 +8,20 @@ import {
   ChevronDown,
   ChevronUp,
   Radio,
+  Download,
+  FileJson,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetContent,
@@ -145,6 +155,11 @@ export function SessionInspector({
   const visible = merged.slice(0, visibleCount);
   const evicted = Math.max(0, totalSeen - merged.length);
 
+  // Экспорт этой сессии — сервер сам фильтрует буфер 5000 по client+port
+  const sessionExportParams = session
+    ? `client=${encodeURIComponent(session.client)}&port=${encodeURIComponent(session.portName)}`
+    : "";
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -226,12 +241,53 @@ export function SessionInspector({
             {/* Список пакетов сессии */}
             <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-slate-800 bg-slate-900/40">
               <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-                <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                     Пакеты сессии
                   </span>
-                  <span className="font-mono text-[10px] text-slate-500">
-                    в буферах: {merged.length} пак. · {fmtBytes(stats.bytes)}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-mono text-[10px] text-slate-500">
+                      в буферах: {merged.length} пак. · {fmtBytes(stats.bytes)}
+                    </span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 shrink-0 gap-1 px-2 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-emerald-300"
+                          aria-label="Экспорт сессии"
+                          title="Экспорт пакетов этой сессии из серверного буфера (до 5000)"
+                        >
+                          <Download className="size-3" aria-hidden />
+                          Экспорт
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="border-slate-700 bg-slate-950 text-slate-200">
+                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500">
+                          только эта сессия
+                        </DropdownMenuLabel>
+                        <DropdownMenuItem asChild>
+                          <a
+                            href={`/api/sniffer/export?format=jsonl&${sessionExportParams}`}
+                            download
+                            className="cursor-pointer"
+                          >
+                            <FileJson className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+                            session.jsonl — пакеты
+                          </a>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <a
+                            href={`/api/sniffer/export?format=csv&${sessionExportParams}`}
+                            download
+                            className="cursor-pointer"
+                          >
+                            <FileSpreadsheet className="mr-2 size-3.5 text-emerald-400" aria-hidden />
+                            отчёт CSV — сводка сессии
+                          </a>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </span>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto custom-scroll">
