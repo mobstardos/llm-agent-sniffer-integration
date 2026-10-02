@@ -144,6 +144,13 @@ mcp_servers:
     env:
       ONEC_QA_URL: "${ONEC_QA_URL}"
       ONEC_QA_HTTP_TOKEN: "${ONEC_QA_HTTP_TOKEN}"
+  honcho:
+    command: python
+    args: ["-m", "src.mcp_servers.honcho.server"]
+    env:
+      HONCHO_MCP_URL: "${HONCHO_MCP_URL}"
+      HONCHO_API_KEY: "${HONCHO_API_KEY}"
+      HONCHO_WORKSPACE_ID: "${HONCHO_WORKSPACE_ID}"
 
 # Лимиты
 limits:

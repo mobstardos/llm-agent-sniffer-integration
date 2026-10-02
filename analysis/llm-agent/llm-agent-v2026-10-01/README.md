@@ -1,7 +1,7 @@
 # 🤖 LLM Agent — мультиагентная система правки файлов и БД
 
 Локальный веб-чат с LLM, который через **MCP-серверы** управляет файлами
-проекта и базами данных. Поддерживает 41 MCP-сервер, 40 агентов, полный
+проекта и базами данных. Поддерживает 42 MCP-сервера, 41 агент, полный
 цикл 1С-разработки, интеграцию с PostgreSQL+pgvector, Ollama (малая LLM),
 Apache AGE, Kafka (CDC), Kubernetes.
 
@@ -12,7 +12,7 @@ Apache AGE, Kafka (CDC), Kubernetes.
 | Документ | Что внутри |
 |---|---|
 | **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** | подробная инструкция: установка, первый запуск, мастер настройки, `.env`, PostgreSQL, расширение, диагностика |
-| **[docs/CAPABILITIES.md](docs/CAPABILITIES.md)** | полное описание возможностей: чат, модели, 40 агентов, 41 MCP, память, журнал, bridge, аналитика |
+| **[docs/CAPABILITIES.md](docs/CAPABILITIES.md)** | полное описание возможностей: чат, модели, 41 агент, 42 MCP, память, журнал, bridge, аналитика |
 | **[docs/FAQ.md](docs/FAQ.md)** | решения типовых проблем (окно bat закрывается, кодировки, порт занят, 403 region, куки протухли…) |
 | [docs/ARCHITECTURE-V2.md](docs/ARCHITECTURE-V2.md) | архитектура системы |
 | [docs/JOURNAL.md](docs/JOURNAL.md) | журнал действий: откат и реплей |
@@ -43,11 +43,15 @@ Apache AGE, Kafka (CDC), Kubernetes.
 - 🔍 **Гибридный поиск** — vector + BM25 через RRF
 - 🌳 **Snowball-морфология** — русский язык + синонимы
 - 🧠 **Ollama (малая LLM)** — фоновое обогащение событий
+- 🧠 **Honcho** — межсессионная память агентов (Plastic Labs, официальный
+  MCP): peers/sessions/conclusions, representation, peer card, dreams;
+  слой долговременной памяти для oac_orchestrator —
+  [docs/HONCHO_INTEGRATION.md](docs/HONCHO_INTEGRATION.md)
 - 📊 **Analytics** — 6 materialized views + дашборд + WebSocket
 - 🕸 **Apache AGE** — property graph (Cypher)
 
 ### Инструменты
-- 🔧 **41 MCP-сервер**:
+- 🔧 **42 MCP-сервера**:
   - Файлы, Git, Shell, Database Extended
   - Code Analysis, LSP, Testing, Build, Debug
   - HTTP, Security, GitHub, Migration, CI/CD
@@ -57,6 +61,9 @@ Apache AGE, Kafka (CDC), Kubernetes.
     [docs/ONEC_QA_INTEGRATION.md](docs/ONEC_QA_INTEGRATION.md))
   - Network, Monitoring, Frontend, Data, Kubernetes
   - Sniffer (перехват TCP-трафика: UniversalSniffer)
+  - Honcho (межсессионная память агентов: peers, sessions, conclusions —
+    официальный MCP, mcp.honcho.dev или self-hosted; долговременная память
+    для OAC-оркестратора, [docs/HONCHO_INTEGRATION.md](docs/HONCHO_INTEGRATION.md))
 - 📚 **Extractors** — PDF, DOCX, XLSX, Image, Audio, Video
 - 🌐 **Vision** — Qwen-VL, LLaVA, Tesseract
 
@@ -68,12 +75,12 @@ Apache AGE, Kafka (CDC), Kubernetes.
 - ☸️ **Kubernetes MCP** — pods, deployments, services, helm
 
 ### Разработка
-- 🤖 **40 агентов**: file, mysql, postgres, onec*, deepseek, git,
+- 🤖 **41 агент**: file, mysql, postgres, onec*, deepseek, git,
   shell, document, image, browser, media, storage, code_analysis,
   lsp, testing, build, debug, http, security, github, migration,
   db_extended, documentation, cicd, environment, network,
   monitoring, frontend, data, kubernetes, sniffer,
-  onec_designer_tools, onec_qa, oac_orchestrator
+  onec_designer_tools, onec_qa, oac_orchestrator, honcho_memory
 - 🧪 **Harness** — сценарии, fixtures, assertions, chaos, baseline
 - 🔄 **CI-интеграция** — GitHub Actions, GitLab CI
 
@@ -106,7 +113,7 @@ llm-agent/
 │   │                      # graph_store, hybrid_search, analytics, AGE,
 │   │                      # CDC, backup, pg_metrics, multi_instance
 │   ├── ollama/            # малая LLM: client, enricher, worker
-│   ├── mcp_servers/       # 41 MCP-сервер
+│   ├── mcp_servers/       # 42 MCP-сервера
 │   ├── harness/           # сценарии, mocks, reporter (JUnit XML)
 │   ├── extraction/        # PDF, DOCX, XLSX, Image, Audio
 │   ├── cluster/           # Redis bus, heartbeat, WS bridge

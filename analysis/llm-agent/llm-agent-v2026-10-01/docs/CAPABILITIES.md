@@ -58,7 +58,7 @@ MCP-инструменты, каждая операция записываетс
   сообщений, дайджест журнала — ноль затрат облака; при активном локальном
   чате воркер встаёт на паузу (свопов VRAM нет).
 
-## 3. Агенты (40)
+## 3. Агенты (41)
 
 Каждый агент — папка в `agents/` (промпт + user-инструкция + yaml-манифест)
 и свой MCP-сервер с инструментами. Управление: ⚙️ → «Агенты» (включение,
@@ -73,9 +73,10 @@ MCP-инструменты, каждая операция записываетс
 | Веб | `browser`, `http` |
 | Сеть | `sniffer` — перехват TCP-трафика (UniversalSniffer): запуск/остановка прокси, пакеты, сессии, разбор протоколов (Thrift, RemoteServer, Modbus, HTTP/JSON, hexdump), тревоги, аномалии, экспорт JSONL/SQLite/PCAP/CSV |
 | Оркестрация | `oac_orchestrator` — методология OAC: анализ → план → подтверждение → выполнение → проверка, делегирование профильным агентам |
+| Память | `honcho_memory` — межсессионная память через Honcho (Plastic Labs): вспомнить пользователя (representation, peer card, выводы), записать наблюдения (memory store: сессия → сообщения обеих сторон диалога); слой долговременной памяти для `oac_orchestrator` — [HONCHO_INTEGRATION.md](HONCHO_INTEGRATION.md) |
 | Прочее | `shell`, `deepseek`, `documentation`, `journal`, `monitoring`, `kubernetes`, `security`, `migration` |
 
-## 4. MCP-инструменты (42 сервера)
+## 4. MCP-инструменты (43 сервера)
 
 MCP-серверы (`src/mcp_servers/*`) дают агентам безопасные инструменты:
 файловая система (чтение/запись/патчи), shell (с подтверждением), SQL к
@@ -88,10 +89,14 @@ vision-описание картинок, транскрипция аудио (f
 MCP QA (тестирование управляемых форм через тест-клиент: окна, поля, кнопки,
 таблицы, проверка результата — только тестовая база),
 сниффер (UniversalSniffer: перехват TCP-прокси, пакеты, сессии, тревоги,
-анализ аномалий, экспорт), журнал, память, мониторинг и др. Реестр и
+анализ аномалий, экспорт), Honcho (межсессионная память агентов: workspace
+→ peers → sessions → conclusions, representation, peer card, dreams —
+официальный MCP-эндпоинт mcp.honcho.dev или self-hosted; режимы Recall и
+Memory store), журнал, память, мониторинг и др. Реестр и
 состояние — ⚙️ → «MCP» и «Capabilities» (`capabilities/*.yaml` описывают,
 что доступно). Подробнее о сниффере — [SNIFFER_INTEGRATION.md](SNIFFER_INTEGRATION.md),
-о MCP QA — [ONEC_QA_INTEGRATION.md](ONEC_QA_INTEGRATION.md).
+о MCP QA — [ONEC_QA_INTEGRATION.md](ONEC_QA_INTEGRATION.md),
+о Honcho — [HONCHO_INTEGRATION.md](HONCHO_INTEGRATION.md).
 
 ## 5. Память
 

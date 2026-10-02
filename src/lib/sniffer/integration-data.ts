@@ -137,6 +137,51 @@ export interface PackageTotals {
   note: string;
 }
 
+// --- Honcho (межсессионная память агентов, Plastic Labs) ---
+
+export type HonchoToolGroup = "recall" | "store" | "meta";
+
+export interface HonchoEnvVar {
+  key: string;
+  desc: string;
+}
+
+export interface HonchoConcept {
+  term: string;
+  desc: string;
+}
+
+export interface HonchoTool {
+  name: string;
+  group: HonchoToolGroup;
+  desc: string;
+  /** Изменяет состояние памяти (запись). */
+  mutating?: boolean;
+  /** Reasoned-ответ — заметно дольше дешёвых чтений (5+ сек). */
+  slow?: boolean;
+}
+
+export interface HonchoMode {
+  mode: "recall" | "memory_store";
+  desc: string;
+}
+
+export interface HonchoServerInfo {
+  name: string;
+  vendor: string;
+  license: string;
+  hostedMcpUrl: string;
+  docsUrl: string;
+  githubUrl: string;
+  envVars: HonchoEnvVar[];
+  concepts: HonchoConcept[];
+  tools: HonchoTool[];
+  modes: HonchoMode[];
+  bestPractices: string[];
+  oacTieIn: string;
+  mcpJson: string;
+}
+
 export interface IntegrationPayload {
   archives: ArchiveInfo[];
   snifferArchive: SnifferArchiveInfo;
@@ -147,6 +192,7 @@ export interface IntegrationPayload {
   mcpTools: McpTool[];
   codeSnippets: CodeSnippet[];
   qaServer: QaServerInfo;
+  honchoServer: HonchoServerInfo;
   packageTotals: PackageTotals;
 }
 
@@ -166,7 +212,7 @@ const archives: ArchiveInfo[] = [
       "Оркестратор с LLM-роутингом intents → DAG планов → параллельное выполнение",
       "Память: семантическая, эпизодическая, процедурная (vector + graph AGE)",
       "Журнал (journal) с replay/rollback, телеметрия, harness для тестов",
-      "Фактический состав после интеграции: 41 MCP-сервер и 40 агентов (в т.ч. sniffer, onec_designer_tools, onec_qa, oac_orchestrator)",
+      "Фактический состав после интеграции: 42 MCP-сервера и 41 агент (в т.ч. sniffer, onec_designer_tools, onec_qa, honcho_memory, oac_orchestrator)",
     ],
   },
 ];
@@ -265,11 +311,11 @@ const repos: RepoInfo[] = [
 ];
 
 const packageTotals: PackageTotals = {
-  mcpServers: 41,
-  agents: 40,
-  mcpServersBefore: 40,
-  agentsBefore: 39,
-  note: "onec_qa — +1 MCP и +1 агент к составу после sniffer-интеграции",
+  mcpServers: 42,
+  agents: 41,
+  mcpServersBefore: 41,
+  agentsBefore: 40,
+  note: "honcho — +1 MCP и +1 агент к составу после onec_qa",
 };
 
 const qaTools: QaTool[] = [
@@ -370,6 +416,111 @@ const qaServer: QaServerInfo = {
     "Лимиты объёма: max_nodes ≤ 5000 · max_depth ≤ 20 · max_rows ≤ 1000",
   ],
   docsUrl: "https://docs.onerpa.ru/mcp-servery-1c/servery/qa",
+};
+
+const honchoServer: HonchoServerInfo = {
+  name: "Honcho — межсессионная память агентов",
+  vendor: "Plastic Labs",
+  license: "AGPL-3.0",
+  hostedMcpUrl: "https://mcp.honcho.dev",
+  docsUrl: "https://honcho.dev",
+  githubUrl: "https://github.com/plastic-labs/honcho",
+  envVars: [
+    {
+      key: "HONCHO_MCP_URL",
+      desc: "URL официального Honcho MCP-сервера (default https://mcp.honcho.dev)",
+    },
+    {
+      key: "HONCHO_API_KEY",
+      desc: "Ключ облака Honcho (hch-..., выпускается в app.honcho.dev); для self-hosted не требуется",
+    },
+    {
+      key: "HONCHO_WORKSPACE_ID",
+      desc: "Workspace по умолчанию для инструментов прокси (опционально)",
+    },
+  ],
+  concepts: [
+    {
+      term: "workspace",
+      desc: "Корневое пространство: изолирует пиры, сессии и выводы (обычно один на продукт)",
+    },
+    {
+      term: "peer",
+      desc: "Участник памяти — человек или агент; один стабильный peer_id на человека",
+    },
+    {
+      term: "session",
+      desc: "Контекст-«корзина» диалога: тред или проект, куда пишутся сообщения",
+    },
+    {
+      term: "conclusion",
+      desc: "Вывод о пире: explicit / deductive / inductive / contradiction, source_ids, times_derived",
+    },
+    {
+      term: "representation",
+      desc: "Динамическая сводка пира — что система знает о нём на текущий момент",
+    },
+    {
+      term: "peer card",
+      desc: "Биографические факты пира (имя, роль, предпочтения) — задаются явно",
+    },
+    {
+      term: "dream",
+      desc: "Фоновая консолидация памяти — синтез и переосмысление выводов",
+    },
+    {
+      term: "reasoning_level",
+      desc: "Глубина reasoning для chat: minimal / low / medium / high / max",
+    },
+  ],
+  tools: [
+    // Recall — чтение памяти
+    { name: "list_workspaces", group: "recall", desc: "Список workspace'ов в проекте" },
+    { name: "list_peers", group: "recall", desc: "Пиры workspace: люди и агенты" },
+    { name: "get_peer_card", group: "recall", desc: "Биографические факты пира (peer card)" },
+    { name: "list_sessions", group: "recall", desc: "Сессии workspace — контексты диалогов" },
+    { name: "get_session_context", group: "recall", desc: "Полный контекст сессии: сообщения и выводы" },
+    { name: "get_peer_context", group: "recall", desc: "Что помнит система о пире в этой сессии" },
+    { name: "get_representation", group: "recall", desc: "Сводка-представление пира: что известно на сейчас" },
+    { name: "chat", group: "recall", desc: "Reasoned-ответ по памяти пира (deep reasoning)", slow: true },
+    { name: "workspace_chat", group: "recall", desc: "Reasoned-ответ по всему workspace", slow: true },
+    { name: "search", group: "recall", desc: "Семантический поиск по памяти" },
+    { name: "list_conclusions", group: "recall", desc: "Выводы о пире: типы и источники" },
+    { name: "get_conclusions", group: "recall", desc: "Выводы по предикату (predicate)" },
+    { name: "get_derived_conclusions", group: "recall", desc: "Выводы, выведенные из других (times_derived)" },
+    // Memory store — запись (mutating)
+    { name: "create_workspace", group: "store", desc: "Создать workspace", mutating: true },
+    { name: "create_peer", group: "store", desc: "Создать пира (человек / агент)", mutating: true },
+    { name: "set_peer_card", group: "store", desc: "Задать peer card — биографические факты", mutating: true },
+    { name: "create_session", group: "store", desc: "Создать сессию-контекст", mutating: true },
+    { name: "add_peers_to_session", group: "store", desc: "Добавить пиров в сессию", mutating: true },
+    { name: "add_messages_to_session", group: "store", desc: "Записать сообщения диалога в сессию", mutating: true },
+    { name: "schedule_dream", group: "store", desc: "Запланировать dream — фоновая консолидация", mutating: true },
+    // Служебные
+    { name: "honcho_tools_list", group: "meta", desc: "Каталог инструментов прокси с пометками mutating/slow" },
+  ],
+  modes: [
+    {
+      mode: "recall",
+      desc: "Recall — чтение памяти перед ответом: representation, conclusions, search и peer/session context — дешёвые чтения дают модели персональный контекст пользователя.",
+    },
+    {
+      mode: "memory_store",
+      desc: "Memory store — запись диалогов после ответа: add_messages_to_session сохраняет обмен, и Honcho асинхронно выводит conclusions и обновляет representation.",
+    },
+  ],
+  bestPractices: [
+    "Один стабильный peer_id на человека — память накапливается между сессиями и продуктами, не плодите новых пиров.",
+    "session_id — «корзина» контекста (тред, проект): переиспользуйте сессию вместо создания новой на каждый диалог.",
+    "Reasoning асинхронный: conclusions и representation дозревают в фоне после записи — не ждите мгновенного обновления.",
+    "Сначала дешёвые чтения (representation, conclusions, search); chat / workspace_chat — только когда нужен reasoned-ответ (5+ секунд).",
+    "Ключ hch-... храните только в env серверного прокси — на клиент он не передаётся.",
+    "dreams не блокируют диалог: schedule_dream запускает фоновую консолидацию — продолжайте работу.",
+  ],
+  oacTieIn:
+    "В README OAC (alexeyk222/Agents) заявлена Honcho как межсессионная память конвейера. В пакете агент honcho_memory + MCP-прокси дают oac_orchestrator долговременный слой: MVI-контекст между запусками дополняется representation и conclusions из Honcho (memory: provider: honcho в loops/oac_pipeline.yaml).",
+  mcpJson:
+    '{\n  "mcpServers": {\n    "honcho": {\n      "url": "https://mcp.honcho.dev",\n      "headers": {\n        "Authorization": "Bearer hch-..."\n      }\n    }\n  }\n}',
 };
 
 const integrationPlan: PlanStep[] = [
@@ -482,6 +633,20 @@ const integrationPlan: PlanStep[] = [
     ],
     status: "done",
   },
+  {
+    id: "honcho-memory",
+    title: "Honcho — межсессионная память (MCP-прокси + агент)",
+    description:
+      "src/mcp_servers/honcho/server.py — stdio MCP-прокси к официальному Honcho MCP (mcp.honcho.dev, Streamable HTTP, Bearer hch-...): 21 инструмент памяти (recall / memory store / служебные). Агент agents/honcho_memory — цикл recall → respond → record; oac_orchestrator опирается на него как долговременный слой памяти.",
+    files: [
+      "src/mcp_servers/honcho/server.py",
+      "src/mcp_servers/honcho/__init__.py",
+      "mcp_servers/honcho/server.yaml",
+      "agents/honcho_memory/agent.yaml",
+      "docs/HONCHO_INTEGRATION.md",
+    ],
+    status: "done",
+  },
 ];
 
 const fileTree: FileTreeEntry[] = [
@@ -518,6 +683,10 @@ const fileTree: FileTreeEntry[] = [
   { path: "mcp_servers/onec_qa/server.yaml", action: "added", note: "Подключение 1c-qa → http://127.0.0.1:8020/mcp, env LICENSE_KEY_QA / MCP_QA_*" },
   { path: "agents/onec_qa/agent.yaml", action: "added", note: "Маршрутизация: тестирование 1С, qa, тест-клиент" },
   { path: "agents/onec_qa/prompt.md", action: "added", note: "Правила: только тестовая база, барьер «исход неизвестен», без повторов вслепую" },
+  { path: "src/mcp_servers/honcho/server.py", action: "added", note: "stdio MCP-прокси: 21 инструмент памяти → официальный Honcho MCP (mcp.honcho.dev, Bearer hch-...)" },
+  { path: "src/mcp_servers/honcho/__init__.py", action: "added", note: "Пакет MCP-прокси Honcho" },
+  { path: "mcp_servers/honcho/server.yaml", action: "added", note: "env HONCHO_MCP_URL / HONCHO_API_KEY / HONCHO_WORKSPACE_ID" },
+  { path: "agents/honcho_memory/agent.yaml", action: "added", note: "Маршрутизация: память, «вспомни», что я говорил; цикл recall → respond → record" },
   { path: "loops/oac_pipeline.yaml", action: "added", note: "Конвейер OAC: анализ→план→подтверждение→выполнение→проверка" },
   { path: "agents/oac_orchestrator/agent.yaml", action: "added", note: "Оркестратор ролевых агентов OAC" },
   { path: "agents/oac_orchestrator/prompt.md", action: "added", note: "Правила MVI-контекста и gate подтверждений" },
@@ -525,6 +694,7 @@ const fileTree: FileTreeEntry[] = [
   { path: "docs/SNIFFER_INTEGRATION.md", action: "added", note: "Схема портов, 15 MCP-инструментов, правила алертов" },
   { path: "docs/OAC_INTEGRATION.md", action: "added", note: "Ролевая модель, MVI, память Honcho" },
   { path: "docs/ONEC_QA_INTEGRATION.md", action: "added", note: "Запуск comol/qa_mcp, env-переменные, первая сессия, правила безопасности" },
+  { path: "docs/HONCHO_INTEGRATION.md", action: "added", note: "Концепты workspace/peer/session, 21 инструмент прокси, env, best practices, связь с OAC" },
   { path: "README.md", action: "modified", note: "Раздел «Сниффер трафика» и ссылки на новые MCP/агенты" },
   { path: "docs/CAPABILITIES.md", action: "modified", note: "Добавлены возможности анализа трафика АЗС" },
 ];
@@ -726,5 +896,6 @@ export const integrationPayload: IntegrationPayload = {
   mcpTools,
   codeSnippets,
   qaServer,
+  honchoServer,
   packageTotals,
 };

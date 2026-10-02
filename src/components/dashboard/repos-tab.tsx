@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowDown,
   ExternalLink,
   GitBranch,
   Lightbulb,
@@ -28,6 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import type { IntegrationPayload } from "@/lib/sniffer/integration-data";
 import { QaSection } from "@/components/dashboard/qa-section";
+import { HonchoSection } from "@/components/dashboard/honcho-section";
 
 interface ReposTabProps {
   data: IntegrationPayload | null;
@@ -239,6 +241,10 @@ export function ReposTab({ data }: ReposTabProps) {
                 планы, подтверждения оператора и результаты проверок возвращаются в
                 контекст следующих запусков — интеграция сохранена в oac_pipeline.yaml.
               </p>
+              <p className="mt-1.5 flex items-start gap-1 text-[11px] font-medium text-emerald-400">
+                <ArrowDown className="mt-0.5 size-3 shrink-0" aria-hidden />
+                Honcho подключён как долговременная память (см. секцию ниже)
+              </p>
             </div>
           </div>
         </CardContent>
@@ -246,6 +252,9 @@ export function ReposTab({ data }: ReposTabProps) {
 
       {/* MCP QA — тестирование 1С (comol/qa_mcp) */}
       <QaSection qa={data.qaServer} />
+
+      {/* Honcho — межсессионная память (Plastic Labs) */}
+      <HonchoSection honcho={data.honchoServer} />
     </div>
   );
 }
