@@ -532,3 +532,26 @@ Unresolved / next:
 - При появлении реального контейнера QA: e2e первый сеанс (qa_start → ui_window_tree) через дашборд не нужен — проверяется в llm-agent
 - Идея: карточка статуса onec_qa/onec_designer_tools в дашборде (healthz-пинг, если сервисы запущены)
 - GitHub: закоммичены analysis/** (в т.ч. onec_qa) — не забыть пушить при следующих итерациях
+
+---
+Task ID: full-qa-20261002
+Agent: main (Z.ai Code)
+Task: Полная проверка работоспособности всего приложения (запрос пользователя)
+
+Work Log:
+- Среда: порт 3000 → 200, lint 0 ошибок, dev.log без ошибок (SSE-стримы живые, Prisma пишет алерты)
+- API (curl, все 200): stats / packets (limit+protocol+direction+minSize+search → filtered: 7) / series / sessions / alerts (live + history) / packet/[id] (+hexdump) / scenario (GET) / integration / download/notes; export?counts=1 (packets 734, sessions 6, alerts 4); export?format=csv — BOM+«;»; download/package — 200, 2.41 МБ, 1518 записей, testzip OK
+- SSE: 50 event/data строк за 4с — поток живой
+- Сценарий: POST giant_attack → активен, автозавершение, DELETE → None; в UI Thrift-шторм: амбер-бейдж с обратным отсчётом, тревоги 7→13
+- Браузер (agent-browser, свежая сессия, консоль чистая): Обзор (KPI+архивы+архитектура), Сниффер (KPI со спарклайнами и трендами, crit-glow, тосты CRIT/WARN), сценарий Thrift-шторм, пауза P (пилюля «10/244 новых пакетов в фоне» → «Перейти к свежим» → исчезла), инспектор сессии (статы, пакеты, экспорт), детальный лист #1947 (все поля + hexdump + закрепить/JSON), журнал тревог (SQLite: 23, фильтры crit 15/warn 8/info 0, экспорт), меню экспорта со счётчиками (traffic.jsonl 2.4 тыс. / CSV / sessions 7 / alerts 22), чипы каналов с живыми счётчиками
+- Мобайл 390px: карточки стекуются, архитектура вертикально, футер внизу прижат, без горизонтального переполнения
+- Архив: smoke stdio onec_qa → 31 tool (initialize → notifications/initialized → tools/list; ВАЖНО: без notifications/initialized клиент получает только ответ initialize — это норма протокола, первый тест без него был ложной тревогой)
+- Git-гигиена: обнаружен mode-шум (chmod +x на сотни файлов после работы агентов) → core.fileMode false; .zscripts/dev.pid untracked + в .gitignore (runtime); реальных изменениий контента с ba6fcb1 — нет; GitHub = локаль (ba6fcb1)
+
+Stage Summary:
+- Приложение полностью работоспособно: сервер, 11 API-эндпоинтов, SSE, сценарии, все интерактивы 4 вкладок, мобайл, zip-артефакт, MCP-прокси onec_qa, синхронизация GitHub — всё проверено и работает
+- Настроено: core.fileMode false (защита от mode-шума песочницы), dev.pid больше не в git
+
+Unresolved / next:
+- dev.pid в истории git остался (ранние коммиты) — некритично, файла в HEAD больше нет
+- Реальный контейнер qa_mcp недоступен (нет Docker) — e2e с 1С остаётся за пределами песочницы

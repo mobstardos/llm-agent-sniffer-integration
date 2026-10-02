@@ -56,3 +56,4 @@ server.log
 tool-results/
 db/*.db
 db/*.db-journal
+.zscripts/dev.pid
