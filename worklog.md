@@ -647,3 +647,18 @@ Stage Summary:
 - Последний коммит на remote: 975a30c "Integrate Honcho (AI memory) into llm-agent package + dashboard"
 - История: d3cc864 → a322731 → ba6fcb1 (MCP QA) → 03aef57 (Full-app QA) → 975a30c (Honcho)
 - Действий по повторному push не требуется
+
+---
+Task ID: readme-install-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь спросил "как установить и запустить" — дать инструкцию установки/запуска.
+
+Work Log:
+- Проверена структура репо: корень = Next.js дашборд, analysis/llm-agent/llm-agent-v2026-10-01 = основное Python-приложение
+- Изучены README.md / docs/GETTING_STARTED.md / DEPLOYMENT_GUIDE.md / run.py / main.py / install.py пакета llm-agent
+- Создан корневой README.md: быстрый старт (Windows/Linux), опциональные компоненты (PG, Ollama), MCP QA (docker comol/qa_mcp:latest + тест-клиент 1С), Honcho, дашборд
+- Commit + push: README доступен на GitHub
+
+Stage Summary:
+- Инструкция установки опубликована в README репозитория: https://github.com/mobstardos/llm-agent-sniffer-integration#readme
+- Кратко: python install.py → run.bat/run.sh → http://127.0.0.1:8000; QA: docker run comol/qa_mcp:latest -p 8020:8020 + 1cv8c /TestClient; дашборд: bun install && bun run dev
