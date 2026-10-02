@@ -138,6 +138,12 @@ mcp_servers:
     env:
       ONEC_MCP_URL: "${ONEC_MCP_URL}"
       ONEC_MCP_TOKEN: "${ONEC_MCP_TOKEN}"
+  onec_qa:
+    command: python
+    args: ["-m", "src.mcp_servers.onec_qa.server"]
+    env:
+      ONEC_QA_URL: "${ONEC_QA_URL}"
+      ONEC_QA_HTTP_TOKEN: "${ONEC_QA_HTTP_TOKEN}"
 
 # Лимиты
 limits:

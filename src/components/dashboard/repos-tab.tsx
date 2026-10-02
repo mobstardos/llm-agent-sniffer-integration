@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { IntegrationPayload } from "@/lib/sniffer/integration-data";
+import { QaSection } from "@/components/dashboard/qa-section";
 
 interface ReposTabProps {
   data: IntegrationPayload | null;
@@ -242,6 +243,9 @@ export function ReposTab({ data }: ReposTabProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* MCP QA — тестирование 1С (comol/qa_mcp) */}
+      <QaSection qa={data.qaServer} />
     </div>
   );
 }

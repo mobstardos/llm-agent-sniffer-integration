@@ -139,6 +139,25 @@ export function IntegrationTab({ data }: IntegrationTabProps) {
               Пропатченное дерево LLM-Agent + вендоренный UniversalSniffer (MCP-сервер,
               агент, конвейер OAC, документация).
             </CardDescription>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 bg-emerald-500/10 font-mono text-[10px] text-emerald-300"
+              >
+                MCP-серверов: {data.packageTotals.mcpServersBefore} →{" "}
+                {data.packageTotals.mcpServers}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="border-cyan-500/40 bg-cyan-500/10 font-mono text-[10px] text-cyan-300"
+              >
+                агентов: {data.packageTotals.agentsBefore} →{" "}
+                {data.packageTotals.agents}
+              </Badge>
+              <span className="text-[10px] leading-snug text-slate-500">
+                {data.packageTotals.note}
+              </span>
+            </div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2 p-4 pt-2">
             <Button
@@ -169,7 +188,7 @@ export function IntegrationTab({ data }: IntegrationTabProps) {
           <CardHeader className="p-4 pb-2">
             <CardTitle className="flex items-center gap-2 text-base text-slate-100">
               <ListChecks className="size-4 text-emerald-400" aria-hidden />
-              План интеграции — 8 шагов
+              План интеграции — {data.integrationPlan.length} шагов
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0 pb-3">
@@ -203,7 +222,7 @@ export function IntegrationTab({ data }: IntegrationTabProps) {
       </div>
 
       {/* Дерево файлов + MCP tools */}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2 [&>*]:min-w-0">
         <Card className="border-slate-800 bg-slate-900/60">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="flex items-center gap-2 text-base text-slate-100">

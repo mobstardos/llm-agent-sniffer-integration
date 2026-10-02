@@ -58,7 +58,7 @@ MCP-инструменты, каждая операция записываетс
   сообщений, дайджест журнала — ноль затрат облака; при активном локальном
   чате воркер встаёт на паузу (свопов VRAM нет).
 
-## 3. Агенты (39)
+## 3. Агенты (40)
 
 Каждый агент — папка в `agents/` (промпт + user-инструкция + yaml-манифест)
 и свой MCP-сервер с инструментами. Управление: ⚙️ → «Агенты» (включение,
@@ -68,14 +68,14 @@ MCP-инструменты, каждая операция записываетс
 |---|---|
 | Разработка | `file`, `code_analysis`, `git`, `github`, `frontend`, `debug`, `testing`, `lsp`, `cicd`, `build`, `environment`, `network` |
 | Данные и БД | `postgres`, `mysql`, `db_extended`, `data`, `storage` |
-| 1С | `onec`, `onec_query`, `onec_dcs`, `onec_forms`, `onec_metadata`, `onec_designer`, `onec_designer_tools`, `onec_tests` |
+| 1С | `onec`, `onec_query`, `onec_dcs`, `onec_forms`, `onec_metadata`, `onec_designer`, `onec_designer_tools`, `onec_tests`, `onec_qa` — тестирование управляемых форм через MCP QA (тест-клиент) |
 | Документы и медиа | `document`, `image`, `media` |
 | Веб | `browser`, `http` |
 | Сеть | `sniffer` — перехват TCP-трафика (UniversalSniffer): запуск/остановка прокси, пакеты, сессии, разбор протоколов (Thrift, RemoteServer, Modbus, HTTP/JSON, hexdump), тревоги, аномалии, экспорт JSONL/SQLite/PCAP/CSV |
 | Оркестрация | `oac_orchestrator` — методология OAC: анализ → план → подтверждение → выполнение → проверка, делегирование профильным агентам |
 | Прочее | `shell`, `deepseek`, `documentation`, `journal`, `monitoring`, `kubernetes`, `security`, `migration` |
 
-## 4. MCP-инструменты (41 сервер)
+## 4. MCP-инструменты (42 сервера)
 
 MCP-серверы (`src/mcp_servers/*`) дают агентам безопасные инструменты:
 файловая система (чтение/запись/патчи), shell (с подтверждением), SQL к
@@ -85,10 +85,13 @@ PostgreSQL/MySQL, HTTP-клиент, браузер (Playwright: открыти�
 vision-описание картинок, транскрипция аудио (faster-whisper), 1С: запросы,
 ДСК, формы, метаданные, конфигуратор (логи, дифф), тесты (Vanessa/YAxUnit),
 1С Конструктор MCP (выполнение кода/запросов, валидация, журнал регистрации),
+MCP QA (тестирование управляемых форм через тест-клиент: окна, поля, кнопки,
+таблицы, проверка результата — только тестовая база),
 сниффер (UniversalSniffer: перехват TCP-прокси, пакеты, сессии, тревоги,
 анализ аномалий, экспорт), журнал, память, мониторинг и др. Реестр и
 состояние — ⚙️ → «MCP» и «Capabilities» (`capabilities/*.yaml` описывают,
-что доступно). Подробнее о сниффере — [SNIFFER_INTEGRATION.md](SNIFFER_INTEGRATION.md).
+что доступно). Подробнее о сниффере — [SNIFFER_INTEGRATION.md](SNIFFER_INTEGRATION.md),
+о MCP QA — [ONEC_QA_INTEGRATION.md](ONEC_QA_INTEGRATION.md).
 
 ## 5. Память
 

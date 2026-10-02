@@ -69,6 +69,74 @@ export interface CodeSnippet {
   code: string;
 }
 
+// --- MCP QA (тестирование 1С, comol/qa_mcp) ---
+
+export type QaToolGroup =
+  | "Жизненный цикл qa_*"
+  | "Окна и формы"
+  | "Элементы и ввод"
+  | "Таблицы";
+
+export interface QaEnvVar {
+  key: string;
+  desc: string;
+}
+
+export interface QaTool {
+  name: string;
+  group: QaToolGroup;
+  desc: string;
+  /** Требует hook-расширение прокси (не прямая команда тест-клиента). */
+  needsHook?: boolean;
+}
+
+export interface QaSessionStep {
+  title: string;
+  command?: string;
+  note?: string;
+}
+
+export type QaSafetyLevel = "amber" | "red" | "slate";
+
+export interface QaSafetyRule {
+  level: QaSafetyLevel;
+  title: string;
+  text: string;
+}
+
+export interface QaServerInfo {
+  name: string;
+  author: string;
+  version: string;
+  image: string;
+  platform: string;
+  port: number;
+  mcpUrl: string;
+  healthz: string;
+  connectionName: string;
+  transport: string;
+  executor: string;
+  sessionMode: string;
+  toolsTotal: number;
+  envVars: QaEnvVar[];
+  tools: QaTool[];
+  toolGroups: QaToolGroup[];
+  mcpJson: string;
+  firstSession: QaSessionStep[];
+  safetyRules: QaSafetyRule[];
+  /** Контракты и лимиты (value_before/value_after, max_nodes и т.п.). */
+  guarantees: string[];
+  docsUrl: string;
+}
+
+export interface PackageTotals {
+  mcpServers: number;
+  agents: number;
+  mcpServersBefore: number;
+  agentsBefore: number;
+  note: string;
+}
+
 export interface IntegrationPayload {
   archives: ArchiveInfo[];
   snifferArchive: SnifferArchiveInfo;
@@ -78,6 +146,8 @@ export interface IntegrationPayload {
   fileTree: FileTreeEntry[];
   mcpTools: McpTool[];
   codeSnippets: CodeSnippet[];
+  qaServer: QaServerInfo;
+  packageTotals: PackageTotals;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +166,7 @@ const archives: ArchiveInfo[] = [
       "Оркестратор с LLM-роутингом intents → DAG планов → параллельное выполнение",
       "Память: семантическая, эпизодическая, процедурная (vector + graph AGE)",
       "Журнал (journal) с replay/rollback, телеметрия, harness для тестов",
+      "Фактический состав после интеграции: 41 MCP-сервер и 40 агентов (в т.ч. sniffer, onec_designer_tools, onec_qa, oac_orchestrator)",
     ],
   },
 ];
@@ -193,6 +264,114 @@ const repos: RepoInfo[] = [
   },
 ];
 
+const packageTotals: PackageTotals = {
+  mcpServers: 41,
+  agents: 40,
+  mcpServersBefore: 40,
+  agentsBefore: 39,
+  note: "onec_qa — +1 MCP и +1 агент к составу после sniffer-интеграции",
+};
+
+const qaTools: QaTool[] = [
+  // Жизненный цикл qa_*
+  { name: "qa_status", group: "Жизненный цикл qa_*", desc: "Состояние сеанса и подключения к тест-клиенту" },
+  { name: "qa_start", group: "Жизненный цикл qa_*", desc: "Подключиться к тест-клиенту (connection — имя профиля)" },
+  { name: "qa_stop", group: "Жизненный цикл qa_*", desc: "Корректно завершить сеанс тестирования" },
+  { name: "qa_reconnect", group: "Жизненный цикл qa_*", desc: "Переподключение после обрыва (force=True — принудительно)" },
+  { name: "qa_command_status", group: "Жизненный цикл qa_*", desc: "Судьба команды после обрыва связи — барьер «исход неизвестен»" },
+  { name: "qa_doctor", group: "Жизненный цикл qa_*", desc: "Диагностика окружения и подключения" },
+  { name: "qa_profiles", group: "Жизненный цикл qa_*", desc: "Список профилей подключений" },
+  { name: "qa_data_candidates", group: "Жизненный цикл qa_*", desc: "Кандидаты в справочные данные перед вводом", needsHook: true },
+  // Окна и формы
+  { name: "ui_active_window", group: "Окна и формы", desc: "Активное окно тест-клиента" },
+  { name: "ui_window_tree", group: "Окна и формы", desc: "Дерево окон: detail=\"lite\" | \"full\"" },
+  { name: "ui_window_changes", group: "Окна и формы", desc: "Изменения окон с последнего опроса" },
+  { name: "ui_inspect", group: "Окна и формы", desc: "Инспекция элемента: состояние и значения" },
+  { name: "ui_open", group: "Окна и формы", desc: "Открыть объект по виду и имени (Справочник, Документы…)" },
+  { name: "ui_close_form", group: "Окна и формы", desc: "Закрыть форму (on_prompt — обработка вопроса)" },
+  { name: "ui_form", group: "Окна и формы", desc: "Команда формы: command_bar / menu_choice" },
+  { name: "ui_form_schema", group: "Окна и формы", desc: "Схема формы для точных идентификаторов", needsHook: true },
+  // Элементы и ввод
+  { name: "ui_find", group: "Элементы и ввод", desc: "Найти элемент интерфейса по условию" },
+  { name: "ui_select", group: "Элементы и ввод", desc: "Выделить элемент" },
+  { name: "ui_click", group: "Элементы и ввод", desc: "Нажать кнопку/гиперссылку" },
+  { name: "ui_input", group: "Элементы и ввод", desc: "Ввести значение в поле" },
+  { name: "ui_set", group: "Элементы и ввод", desc: "Установить значение атрибута" },
+  { name: "ui_get_text", group: "Элементы и ввод", desc: "Получить текст элемента/окна" },
+  { name: "ui_field", group: "Элементы и ввод", desc: "Операция с полем: dropdown_select и др." },
+  { name: "ui_dialog", group: "Элементы и ввод", desc: "Ответить на диалог (вопрос/предупреждение)" },
+  { name: "ui_wait", group: "Элементы и ввод", desc: "Дождаться состояния интерфейса" },
+  { name: "ui_messages", group: "Элементы и ввод", desc: "Прочитать панель сообщений" },
+  { name: "ui_errors", group: "Элементы и ввод", desc: "Ошибки, отражённые в интерфейсе" },
+  { name: "ui_assert", group: "Элементы и ввод", desc: "Проверить ожидаемое состояние интерфейса" },
+  // Таблицы
+  { name: "ui_table", group: "Таблицы", desc: "Операции с таблицей: select/edit/delete/copy/input_cell/end_edit" },
+  { name: "ui_list", group: "Таблицы", desc: "Чтение списков и таблиц" },
+];
+
+const qaServer: QaServerInfo = {
+  name: "MCP QA — тестирование 1С",
+  author: "comol",
+  version: "0.7.14",
+  image: "comol/qa_mcp:latest",
+  platform: "linux/amd64",
+  port: 8020,
+  mcpUrl: "http://127.0.0.1:8020/mcp",
+  healthz: "/healthz",
+  connectionName: "1c-qa",
+  transport: "Streamable HTTP (состояние сеанса)",
+  executor: "MCP_QA_EXECUTOR=native",
+  sessionMode: "один сеанс на контейнер",
+  toolsTotal: 62,
+  envVars: [
+    { key: "LICENSE_KEY_QA", desc: "Лицензия 1С (платформы в образе нет)" },
+    { key: "MCP_QA_EXECUTOR", desc: "Режим исполнения: native — контейнер сам работает менеджером тестирования" },
+    { key: "MCP_QA_TESTCLIENT", desc: "Адрес тест-клиента 1С (default host.docker.internal:1538)" },
+    { key: "MCP_QA_TESTCLIENT_ID", desc: "Идентификатор сеанса тест-клиента" },
+    { key: "MCP_QA_HTTP_PORT", desc: "Порт HTTP-сервера контейнера (8020)" },
+    { key: "MCP_QA_HTTP_TOKEN", desc: "Bearer-токен защиты MCP-эндпоинта (опционально)" },
+    { key: "MCP_QA_CLIENT_BUS_URL", desc: "Адрес шины обмена командами с тест-клиентом" },
+    { key: "MCP_QA_COMMAND_TIMEOUT", desc: "Таймаут выполнения команды тест-клиента" },
+  ],
+  tools: qaTools,
+  toolGroups: ["Жизненный цикл qa_*", "Окна и формы", "Элементы и ввод", "Таблицы"],
+  mcpJson: '{\n  "mcpServers": {\n    "1c-qa": {\n      "url": "http://127.0.0.1:8020/mcp"\n    }\n  }\n}',
+  firstSession: [
+    {
+      title: "Запустить тест-клиент 1С",
+      command: '1cv8c ENTERPRISE /F"C:\\Bases\\TestCopy" /TestClient -TPort1538 /DisableStartupDialogs',
+      note: "только тестовая копия базы, порт TestClient 1538",
+    },
+    { title: "Проверить состояние", command: "qa_status()", note: "сеанс ещё не подключён" },
+    { title: "Подключиться", command: 'qa_start(connection="test")', note: "профиль test → MCP_QA_TESTCLIENT" },
+    { title: "Прочитать активное окно", command: "ui_active_window()" },
+    { title: "Дерево окон (лайт)", command: 'ui_window_tree(detail="lite")', note: 'detail="full" — с элементами форм' },
+    { title: "Завершить сеанс", command: "qa_stop()" },
+  ],
+  safetyRules: [
+    {
+      level: "amber",
+      title: "UI-действия изменяют данные",
+      text: "Каждый ui_click / ui_input / ui_set / ui_table пишет в базу 1С. Работать только на тестовой базе или копии — никогда на рабочей.",
+    },
+    {
+      level: "red",
+      title: "Обрыв связи = исход неизвестен",
+      text: "Если связь с тест-клиентом оборвалась — исход команды неизвестен: qa_command_status → qa_reconnect(force=True) → прочитать окно. Никогда не повторять команду вслепую.",
+    },
+    {
+      level: "slate",
+      title: "executor_capability: без скриншотов",
+      text: "В контейнере недоступны скриншоты и скрипты — visual-проверки честно помечаются невыполненными.",
+    },
+  ],
+  guarantees: [
+    "Действия, меняющие значение, возвращают value_before → value_after → verified",
+    "Лимиты объёма: max_nodes ≤ 5000 · max_depth ≤ 20 · max_rows ≤ 1000",
+  ],
+  docsUrl: "https://docs.onerpa.ru/mcp-servery-1c/servery/qa",
+};
+
 const integrationPlan: PlanStep[] = [
   {
     id: "vendor-sniffer",
@@ -242,6 +421,20 @@ const integrationPlan: PlanStep[] = [
       "mcp_servers/onec_designer_tools/server.yaml",
       "mcp_servers/onec_designer_tools/tools/*.json",
       "agents/onec_designer_tools/agent.yaml",
+    ],
+    status: "done",
+  },
+  {
+    id: "onec-qa-mcp",
+    title: "MCP onec_qa — тестирование 1С (comol/qa_mcp)",
+    description:
+      "src/mcp_servers/onec_qa/server.py — stdio MCP-прокси к Docker-образу comol/qa_mcp (0.7.14, :8020, подключение 1c-qa): курируемый набор qa_*/ui_* для управления тестовой базой 1С через логическую модель форм. Агент agents/onec_qa — маршрутизация «тестирование/qa/тест-клиент» с правилами безопасности.",
+    files: [
+      "src/mcp_servers/onec_qa/server.py",
+      "mcp_servers/onec_qa/server.yaml",
+      "agents/onec_qa/agent.yaml",
+      "agents/onec_qa/prompt.md",
+      "docs/ONEC_QA_INTEGRATION.md",
     ],
     status: "done",
   },
@@ -321,12 +514,17 @@ const fileTree: FileTreeEntry[] = [
   { path: "agents/onec_designer_tools/agent.yaml", action: "added", note: "Маршрутизация: конструктор/1с-код/запрос" },
   { path: "agents/onec_designer_tools/prompt.md", action: "added", note: "Промпт с ограничениями по опасным операциям" },
   { path: "agents/onec_designer_tools/user.md", action: "added", note: "Примеры запросов разработчика 1С" },
+  { path: "src/mcp_servers/onec_qa/server.py", action: "added", note: "stdio MCP-прокси: ~30 курируемых инструментов qa_*/ui_* → Docker comol/qa_mcp :8020" },
+  { path: "mcp_servers/onec_qa/server.yaml", action: "added", note: "Подключение 1c-qa → http://127.0.0.1:8020/mcp, env LICENSE_KEY_QA / MCP_QA_*" },
+  { path: "agents/onec_qa/agent.yaml", action: "added", note: "Маршрутизация: тестирование 1С, qa, тест-клиент" },
+  { path: "agents/onec_qa/prompt.md", action: "added", note: "Правила: только тестовая база, барьер «исход неизвестен», без повторов вслепую" },
   { path: "loops/oac_pipeline.yaml", action: "added", note: "Конвейер OAC: анализ→план→подтверждение→выполнение→проверка" },
   { path: "agents/oac_orchestrator/agent.yaml", action: "added", note: "Оркестратор ролевых агентов OAC" },
   { path: "agents/oac_orchestrator/prompt.md", action: "added", note: "Правила MVI-контекста и gate подтверждений" },
   { path: "agents/oac_orchestrator/user.md", action: "added", note: "Примеры задач конвейера" },
   { path: "docs/SNIFFER_INTEGRATION.md", action: "added", note: "Схема портов, 15 MCP-инструментов, правила алертов" },
   { path: "docs/OAC_INTEGRATION.md", action: "added", note: "Ролевая модель, MVI, память Honcho" },
+  { path: "docs/ONEC_QA_INTEGRATION.md", action: "added", note: "Запуск comol/qa_mcp, env-переменные, первая сессия, правила безопасности" },
   { path: "README.md", action: "modified", note: "Раздел «Сниффер трафика» и ссылки на новые MCP/агенты" },
   { path: "docs/CAPABILITIES.md", action: "modified", note: "Добавлены возможности анализа трафика АЗС" },
 ];
@@ -527,4 +725,6 @@ export const integrationPayload: IntegrationPayload = {
   fileTree,
   mcpTools,
   codeSnippets,
+  qaServer,
+  packageTotals,
 };

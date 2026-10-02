@@ -468,3 +468,67 @@ Stage Summary:
 Unresolved / next:
 - Счётчик size на GitHub обновляется асинхронно — не пугаться «size: 0» сразу после push
 - Опционально: GitHub Actions CI (lint/tsc), бейджи в README, GitHub Release для integration-zip, синхронизация последующих коммитов (git push origin main)
+
+---
+Task ID: qa-a
+Agent: general-purpose
+Task: Интеграция MCP QA (Docker comol/qa_mcp — ИИ-тестирование управляемых форм 1С) в архив llm-agent по образцу onec_designer_tools
+
+Work Log:
+- Прочитан worklog целиком; изучены паттерны: src/mcp_servers/onec_designer_tools/server.py (сиблинг-прокси), mcp_servers/onec_designer_tools/server.yaml, agents/onec_designer_tools/*, config/settings.yaml (${VAR}), src/mcp_servers/sniffer/server.py, src/core/schema.py (AgentSchema/MCPServerSchema), src/core/loader.py (DeclarationLoader). Найден pre-existing сломанный декларатив qa_mcp (vlikhobabin/qa-mcp-public, артефакты ' + ' в YAML) — ДРУГОЙ проект, не тронут
+- src/mcp_servers/onec_qa/server.py — stdio MCP-прокси 31 инструмента: Streamable HTTP С СОСТОЯНИЕМ СЕАНСА (ленивый initialize под threading.Lock, кэш Mcp-Session-Id в переменной модуля, notifications/initialized 202, ретрай с re-initialize при 404/«session not found»), Accept: application/json, text/event-stream, парсинг SSE (data:-строки, \r\n, выбор ответа по id среди нотификаций), Bearer ONEC_QA_HTTP_TOKEN, http.client с раздельными таймаутами (5 c connect / 120 c операция, ui_wait 900 c, qa_command_status wait_seconds+60), healthz-уточнение ошибок соединения, RU setup-hint (docker run comol/qa_mcp:latest, curl /healthz, 1cv8c ENTERPRISE /F"<база>" /TestClient -TPort1538 /DisableStartupDialogs), _augment_known_errors («Отсутствует подходящий клиент тестирования», executor_capability, client_hook/MCPQAClient); tools/list статический (без upstream); executor_capability-инструменты (ui_screenshot, ui_eval, qa_run_script, qa_setup, qa_install_client) НЕ проксируются — перечислены в qa_tools_list и доках; __main__.py для запуска python -m src.mcp_servers.onec_qa
+- mcp_servers/onec_qa/server.yaml (31 tool: 12 danger external по спецификации задания, остальные read); agents/onec_qa/{agent.yaml (priority 18, 🧪 #ec4899, onec; dangerous_tools == external из server.yaml, проверено assert), prompt.md (8 правил: только тестовая база, статус-first qa_status→qa_start→ui_active_window→ui_window_tree(lite)→действия→qa_stop, барьер «исход неизвестен» qa_command_status→qa_reconnect(force=True)→прочитать окно, busy без очереди, лимиты объёма, честные невыполненные visual-проверки, диагностика ошибок, сценарий открыть→заполнить→провести→проверить), user.md}; +1 MCP и +1 агент в config/settings.yaml (mcp_servers.onec_qa env ${ONEC_QA_URL}/${ONEC_QA_HTTP_TOKEN})
+- Доки: docs/ONEC_QA_INTEGRATION.md (назначение, ASCII-архитектура агент→stdio-прокси→контейнер:8020→тест-клиент 1cv8c на Windows, таблицы env и инструментов по группам, установка, первый сеанс, MCPQAClient.cfe, безопасность, executor_capability, troubleshooting); README.md 40→41 MCP / 39→40 агентов (+QA в 1С-строке, +onec_qa в списке агентов, +3 счётчика); docs/CAPABILITIES.md Агенты 39→40, MCP 41→42 (+onec_qa в 1С-строке и абзаце MCP, ссылка на доку)
+- Валидация: py_compile 3 файлов OK; yaml.safe_load server.yaml/agent.yaml/settings.yaml OK; pydantic AgentSchema/MCPServerSchema OK (+assert dangerous_tools==external); smoke stdio (initialize→notifications/initialized→tools/list=31→qa_tools_list→qa_status при выключенном upstream → RU setup-hint с docker run/healthz/1cv8c); E2E на фейковом Streamable-HTTP upstream (HTTPServer в thread): SSE с нотификацией перед ответом, отзыв сеанса → 404 → re-initialize → ретрай (2 сценария), healthz-ветка ошибки, _parse_sse на \r\n, таймауты; DeclarationLoader: 91 агент / 94 MCP загружены, onec_qa присутствует, 26 pre-existing ошибок (argocd/cassandra/…) не изменились; регресс sniffer/onec_designer_tools/oac_orchestrator OK
+- Zip пересобран: /home/z/my-project/download/llm-agent-v2026-10-01-sniffer-integration.zip — 2.41 МБ, 1518 записей (1136 файлов + 382 каталога; было 1508/1128/380, +8 файлов onec_qa и +2 каталога), те же исключения (.git/__pycache__/*.pyc/node_modules/.venv), testzip OK, README/CAPABILITIES/settings внутри актуальны. Дашборд /home/z/my-project/src, мини-сервисы и порт 3000 не тронуты; git не использовался
+
+Stage Summary:
+- Создано: src/mcp_servers/onec_qa/{__init__,__main__,server}.py; mcp_servers/onec_qa/server.yaml; agents/onec_qa/{agent.yaml,prompt.md,user.md}; docs/ONEC_QA_INTEGRATION.md. Изменено: config/settings.yaml, README.md, docs/CAPABILITIES.md
+- Итоговые счётчики: README 41 MCP / 40 агентов; CAPABILITIES 42 MCP / 40 агентов (счётчики «реестра» src-имплементаций, консистентно с прошлым шагом 40/39→+1); фактически DeclarationLoader грузит 94 MCP-декларации / 91 агент из-за pre-existing битых YAML
+- Ключевые решения: (1) 31 инструмент = 30 из курируемого списка + qa_tools_list (обнаружение, как vc_tools_list у сиблинга) с каталогом, пометками hook и списком executor_capability; (2) недоступные в контейнере инструменты не проксируются, а задокументированы (README/дока/qa_tools_list); (3) ui_form оставлен read по спецификации задания, но в prompt.md добавлено предупреждение (командная панель/меню могут провести документ); (4) session-id кэш в модуле + threading.Lock (вызовы идут через asyncio.to_thread); (5) фейковый upstream-тест компенсирует отсутствие Docker в песочнице — проверена вся цепочка initialize/сеанс/SSE/ретрай
+- Артефакт: download/llm-agent-v2026-10-01-sniffer-integration.zip (2.41 МБ, 1518 записей) — имя файла не менялось
+
+---
+Task ID: qa-b
+Agent: general-purpose (Z.ai Code)
+Task: Раздел «MCP QA — тестирование 1С» (дока docs.onerpa.ru/mcp-servery-1c/servery/qa) в дашборд: статические данные + UI на вкладке «Репозитории» + счётчики пакета 40→41 MCP / 39→40 агентов
+
+Work Log:
+- Прочитан worklog полностью (471 строка) — учтены паттерны: нативные div + overflow-y-auto + custom-scroll вместо ScrollArea, createPortal для fixed, react-hooks/set-state-in-effect, zebra/hover-язык таблиц, кириллические хоткеи не трогать
+- integration-data.ts: типы QaToolGroup/QaEnvVar/QaTool(needsHook)/QaSessionStep/QaSafetyLevel/QaSafetyRule/QaServerInfo/PackageTotals; payload qaServer строго по спецификации (версия 0.7.14, comol/qa_mcp:latest, linux/amd64, :8020, /mcp, /healthz, 1c-qa, Streamable HTTP с состоянием сеанса, MCP_QA_EXECUTOR=native, один сеанс на контейнер, 62 tools всего); 30 курируемых qa_*/ui_* по 4 группам (Жизненный цикл 8 / Окна и формы 8 / Элементы и ввод 12 / Таблицы 2), needsHook у qa_data_candidates и ui_form_schema; 8 env-переменных (LICENSE_KEY_QA…MCP_QA_COMMAND_TIMEOUT, TESTCLIENT default host.docker.internal:1538); mcp.json; firstSession 6 шагов (1cv8c … /TestClient -TPort1538 → qa_status → qa_start(connection="test") → ui_active_window → ui_window_tree(detail="lite") → qa_stop); safety: amber «изменяет данные» / red «исход неизвестен» (qa_command_status → qa_reconnect(force=True) → прочитать окно, не повторять вслепую) / slate executor_capability; guarantees: value_before→value_after→verified, лимиты max_nodes≤5000 · max_depth≤20 · max_rows≤1000; docsUrl
+- packageTotals: MCP 40→41, агенты 39→40 (счётчиков в данных раньше не было — добавлены в карточку «Пакет интеграции» бейджами и highlight'ом llm-agent на «Обзоре»); fileTree +5 файлов onec_qa (итого 42); integrationPlan +9-й шаг «MCP onec_qa — тестирование 1С (comol/qa_mcp)», заголовок плана теперь динамический ({length} шагов)
+- НОВЫЙ qa-section.tsx (третья секция «Репозиториев» после designer tools и OAC, подключён в repos-tab.tsx): карточка сервера в violet-системе (FlaskConical, бейдж автора, v0.7.14, моно-бейджи образ/порт/mcp/healthz/1c-qa/транспорт/платформа, плитки фактов, ссылка на доку); таблица 30 инструментов с фильтр-чипами по группам (aria-pressed, счётчики, повторный клик = сброс), зебра bg-slate-950/40, hover:bg-violet-500/[0.08], sticky-шапка, max-h-96 custom-scroll, бейдж hook; «Первая сессия» — 6 нумерованных шагов с моно-командами и CopyButton; callout'ы amber/red/slate (ShieldAlert/Unplug/CameraOff); чипы-гарантии; env-таблица key/desc (truncate+тултип, zebra, max-h-64); mcp.json pre + копирование; framer-motion появления секции (0.3s, в духе вкладок)
+- Копирование: clipboard.writeText → execCommand-фолбэк, тост + Copy→Check 1.5с (в headless оба пути запрещены — окружение, не баг); CopyButton h-8 w-8
+- Мобильный 390px: у shadcn TableCell base whitespace-nowrap — desc-ячейки раздувают min-content таблицы → для QA-таблиц whitespace-normal + [overflow-wrap:anywhere] (влияет на min-content, break-words — нет); env-ключ truncate 150px; mcp.json переформатирован (макс строка 40ch); на <sm таблица инструментов заменена карточной раскладкой (30 li в том же скролл-контейнере, hidden sm:block / sm:hidden) — выбрано вместо горизонтального скролла
+- Бонус-фикс pre-existing (найден мобильным QA): вкладка «Интеграция» при 390px вылезала на 355px (nowrap-таблицы раздували grid-трек карточек «Дерево файлов»/«MCP-инструменты») → [&>*]:min-w-0 на сетке; теперь docOverflow=0
+- QA-проверки: agent-browser десктоп 1280 (30 строк, фильтр «Таблицы» → ui_table/ui_list, 7 copy-кнопок, ссылки на доку, консоль чистая) и мобайл 390 (карточки инструментов, env/pre без горизонтального скролла, 1px-overflow только от pre-existing OAC-титула, не QA-секция); VLM-ревью скриншотов: после фикса «A+»; lint 0; tsc чисто по src; dev.log без ошибок; /api/integration отдаёт полный payload; zip-кнопка и API/роуты не тронуты; analysis/** не тронуто
+
+Stage Summary:
+- Изменённые файлы: src/lib/sniffer/integration-data.ts, +src/components/dashboard/qa-section.tsx, src/components/dashboard/repos-tab.tsx, src/components/dashboard/integration-tab.tsx; отчёт: agent-ctx/qa-b-general-purpose.md
+- Архитектурное знание: min-content таблиц в grid-треках — лечится [&>*]:min-w-0 на grid и [overflow-wrap:anywhere] на ячейках (break-words min-content не уменьшает); для мобильных каталогов из десятков строк карточная раскладка (hidden sm:block таблица + sm:hidden ul) читается лучше горизонтального скролла; clipboard в headless запрещён — маркером успеха копирования считать тост в реальном браузере
+
+Unresolved / next:
+- Идея: светлая тема — компоненты по-прежнему захардкожены под dark
+- Идея: якорные ссылки на QA-секцию из карточки «Пакет интеграции» (когда появятся ещё секции-серверы)
+
+---
+Task ID: qa-main-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь прислал ссылку https://docs.onerpa.ru/mcp-servery-1c/servery/qa → интеграция MCP QA (тестирование 1С) в проект + QA + публикация на GitHub
+
+Work Log:
+- Проанализирована документация MCP QA (v0.7.14, comol/qa_mcp:latest, порт 8020, Streamable HTTP с сеансом, 62 инструмента, native-режим, тест-клиент на машине пользователя): извлечена спецификация — env, лимиты, правила безопасности, курируемый список ~30 qa_*/ui_* инструментов
+- Task qa-a (general-purpose): в архиве llm-agent создан stdio MCP-прокси src/mcp_servers/onec_qa/server.py (ленивый initialize → Mcp-Session-Id → tools/call, SSE-парсинг, ретрай с re-initialize при 404, Bearer ONEC_QA_HTTP_TOKEN, таймауты 5/120/900с, RU setup-hint), 31 tool в server.yaml (12 danger: external), агент agents/onec_qa (🧪 #ec4899, priority 18, 8 правил безопасности), docs/ONEC_QA_INTEGRATION.md, обновлены settings.yaml/README (41 MCP/40 агентов)/CAPABILITIES; валидация: py_compile+yaml+pydantic OK, stdio smoke 31 tools, e2e на фейковом upstream (SSE/404-ретрай/healthz) PASS; zip пересобран 2.41 МБ / 1518 записей
+- Task qa-b (full-stack-developer): дашборд — payload qaServer в integration-data.ts (30 инструментов по 4 группам, 8 env, mcp.json, первая сессия, safety), новый компонент qa-section.tsx в «Репозиториях» (третья секция, violet-система, фильтр-чипы групп, карточки на мобиле, копирование команд), бейджи «40 → 41 / 39 → 40» и 9-й шаг в «Интеграции», fileTree +5 файлов; попутно вылечен pre-existing вылет карточек за экран на 390px ([&>*]:min-w-0)
+- Main QA (agent-browser): вкладка «Репозитории» — QA-секция полностью (таблица 30 инструментов + hook-бейджи, 3 callout'а, гарантии, env-таблица, mcp.json с копированием, ссылка на доку); «Интеграция» — бейджи и план 9 шагов; мобайл 390px — карточная раскладка инструментов, чипы в 2 колонки; консоль и dev.log без ошибок; lint 0; viewport восстановлен
+- Коммит и push в GitHub (mobstardos/llm-agent-sniffer-integration, main)
+
+Stage Summary:
+- MCP QA интегрирован по всей цепочке: архив (MCP+агент+дока+zip) → дашборд (данные+UI) → GitHub
+- Счётчики пакета: 41 MCP / 40 агентов; CAPABILITIES: 42/40 (pre-existing расхождение README/CAPABILITIES сохранено консистентно прошлым раундам)
+- Реальный контейнер qa_mcp в песочнице недоступен (нет Docker) — прокси протестирован на фейковом Streamable-HTTP upstream
+
+Unresolved / next:
+- При появлении реального контейнера QA: e2e первый сеанс (qa_start → ui_window_tree) через дашборд не нужен — проверяется в llm-agent
+- Идея: карточка статуса onec_qa/onec_designer_tools в дашборде (healthz-пинг, если сервисы запущены)
+- GitHub: закоммичены analysis/** (в т.ч. onec_qa) — не забыть пушить при следующих итерациях
