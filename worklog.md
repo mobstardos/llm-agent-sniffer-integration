@@ -662,3 +662,25 @@ Work Log:
 Stage Summary:
 - Инструкция установки опубликована в README репозитория: https://github.com/mobstardos/llm-agent-sniffer-integration#readme
 - Кратко: python install.py → run.bat/run.sh → http://127.0.0.1:8000; QA: docker run comol/qa_mcp:latest -p 8020:8020 + 1cv8c /TestClient; дашборд: bun install && bun run dev
+
+---
+Task ID: log-analysis-fix-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь прислал лог установки на Windows (upload/Pasted Content_1790956475317.txt) — "проанализируй".
+
+Work Log:
+- Проанализирован лог 910 строк: клонирование OK, pip install OK (Python 3.14.3, полный requirements)
+- Найдено 3 проблемы:
+  1) FATAL: ImportError SUPERVISOR_ENABLED — src/app.py не определял флаг (потерян при Sprint 1.C переносе ws-чата из main.py), а src/ws/chat.py:30 импортирует его обратно → падение uvicorn при старте. Подтверждено: баг присутствует в ОРИГИНАЛЬНОМ архиве пользователя (проверка zip)
+  2) install.py: пользователь ввёл "run.bat" в ответ на вопрос о порте → .env получил PORT=run.bat → смоук-тест не прошёл; валидация отсутствовала
+  3) install.py писал HOST/PORT, а src/config.py читает WEB_HOST/WEB_PORT — выбор порта никогда не применялся
+- Некритичные наблюдения: запуск python run.py вместо run.bat (venv не активирован, системный Python 3.14 + user site-packages), qpx не установлен (опционально), PG автодетект OK но схема не инициализирована, AI-провайдер не настроен (--defaults)
+- Исправления (commit 40b115e):
+  - src/app.py: SUPERVISOR_ENABLED восстановлен (строка 62, ДО импорта ws.chat на 457; AST-проверка + тест логики флага)
+  - install.py: цикл валидации порта 1-65535 + запись WEB_HOST/WEB_PORT
+  - README: секция "Устранение неполадок"
+- Push в GitHub выполнен
+
+Stage Summary:
+- Пользователю нужен: git pull → исправить .env (PORT=run.bat → WEB_PORT=8000) → запуск через run.bat (не python run.py!)
+- Все фиксы верифицированы py_compile + AST + логические тесты
