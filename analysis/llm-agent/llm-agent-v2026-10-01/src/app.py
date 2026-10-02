@@ -51,6 +51,18 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
+# Этап 2 (ARCHITECTURE-V2 §3.10): Supervisor-цикл Plan → Execute → Observe →
+# Re-plan. Отключается env'ом SUPERVISOR_ENABLED=0 — тогда чат работает
+# по пути Этапа 1 через Orchestrator.handle() (обратная совместимость).
+# Определение обязано жить ДО импорта src.ws.chat ниже: chat.py импортирует
+# этот флаг отсюда (обратный импорт из частично инициализированного модуля —
+# нормальный паттерн, но только если имя уже определено к моменту импорта).
+# Раньше флаг потерялся при выносе ws-чата из main.py (Sprint 1.C) —
+# это ломало запуск: ImportError: cannot import name 'SUPERVISOR_ENABLED'.
+SUPERVISOR_ENABLED = os.getenv("SUPERVISOR_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+
 APP_VERSION = "2.0.0"
 START_TS = time.time()
 

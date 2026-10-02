@@ -59,6 +59,20 @@ bash run.sh
 типовые проблемы: [`docs/FAQ.md`](analysis/llm-agent/llm-agent-v2026-10-01/docs/FAQ.md) ·
 production: [`DEPLOYMENT_GUIDE.md`](analysis/llm-agent/llm-agent-v2026-10-01/DEPLOYMENT_GUIDE.md)
 
+### 🛠 Устранение неполадок
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| `ImportError: cannot import name 'SUPERVISOR_ENABLED'` | баг исходного архива (флаг потерян в `src/app.py`) | **исправлено в этом репозитории** — обновитесь: `git pull` |
+| Установщик спросил порт, а в `.env` оказалось `PORT=run.bat` | в вопрос о порте введён не номер | откройте `.env`, замените строку на `WEB_PORT=8000` (**не** `PORT`) |
+| `! venv не активирован`, пакеты ищутся в системе | запуск `python run.py` системным Python | запускайте через **`run.bat`** (или `.venv\Scripts\python.exe run.py`) |
+| Смок-тест установщика: «Сервер не ответил за 2 минуты» | невалидный порт в `.env` (см. выше) | исправьте `WEB_PORT`, затем `run.bat` |
+| `✗ qpx (qwenproxy-cli) не найден` | опциональный QwenProxy не установлен | только для пути Qwen: `npm install -g qwenproxy-cli` (можно игнорировать) |
+| PostgreSQL подключён, но таблиц нет | выбор `[3] Пропустить` при установке | `.venv\Scripts\python.exe scripts/init_db.py` |
+
+> ⚠️ Важно: `src/config.py` читает переменные **`WEB_HOST`/`WEB_PORT`** —
+> старые значения `HOST`/`PORT` из ранних версий установщика игнорируются.
+
 ---
 
 ## 🧪 MCP QA — ИИ-тестирование форм 1С (опционально)

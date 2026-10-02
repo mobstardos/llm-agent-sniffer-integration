@@ -299,7 +299,14 @@ def ask_settings(auto: bool) -> tuple[str, str, str, str]:
         return port, pg_mode, dsn, embedder
     print()
     print(" ─── Настройка ────────────────────────────────────────────────")
-    port = ask(" Порт веб-интерфейса [8000]: ", "8000")
+    # Порт — только число 1–65535 (иначе .env получается невалидным,
+    # а смоук-тест стартует «на порту run.bat» и гарантированно падает)
+    while True:
+        port = ask(" Порт веб-интерфейса [8000]: ", "8000").strip() or "8000"
+        if port.isdigit() and 1 <= int(port) <= 65535:
+            break
+        print("  [!] Порт должен быть числом 1–65535 (например, 8000).")
+        print("      Просто нажмите Enter, чтобы оставить 8000.")
     print()
     print(" PostgreSQL — долговременные зеркала, память агентов, аналитика:")
     print("   [1] Docker-контейнер (нужен Docker Desktop) — рекомендую")
@@ -339,8 +346,9 @@ def write_env(port: str, pg_mode: str, dsn: str, embedder: str) -> None:
         ])
     content = "\n".join([
         "# LLM Agent — сгенерировано install.py",
-        "HOST=127.0.0.1",
-        f"PORT={port}",
+        "# Внимание: src/config.py читает WEB_HOST/WEB_PORT (не HOST/PORT)",
+        "WEB_HOST=127.0.0.1",
+        f"WEB_PORT={port}",
         f"PROJECT_ROOT={BASE}",
         "",
         "# PostgreSQL (зеркала журнала/сессий/планов, память агентов, аналитика)",
