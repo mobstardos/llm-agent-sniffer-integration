@@ -816,3 +816,22 @@ Stage Summary:
 - Репо: фикс готов локально (ad811e0), НУЖЕН свежий токен от пользователя для push
 - Пользователю выдан fix_yaml.py (paste в PowerShell → .venv\Scripts\python.exe fix_yaml.py → run.bat) — чинит все 26 файлов локально без GitHub
 - Статус пользователя: ImportError побеждён (app.py/run.py заменены), сервер стартует; остались только YAML-варнинги (26) и опциональные MCP-фейлы
+
+---
+Task ID: publish-1
+Agent: orchestrator (main)
+Task: Publish pending fixes to GitHub with user-provided fine-grained token; sanitize history sweep
+
+Work Log:
+- Пользователь выдал fine-grained токен; первый push → 403 (Contents не имел Read and write), подтвердено через Contents API PUT ("Resource not accessible")
+- Перед пушем сканирование 14 неотправленных коммитов на секреты: найдены 3 пользовательских лога (upload/Pasted Content_*.txt), один содержит куки DeepSeek (ds_session_id, smidV2)
+- Проверка уже-публичных файлов: root .env (только локальный sqlite path), старый лог 1790956475317 (куков нет) — утечки нет
+- git reset --soft origin/main(стейл) → исключены 3 лога → санитизация worklog (ghp_sNJJ → ghp_***) → git rm --cached .env + старый лог → gitignore правила (/.env, /upload/Pasted*.txt) → чистый коммит c24bf78
+- Push: 403 → пользователь отредактировал токен (Contents: Read and write) → "stale info" (lease по явному URL) → force-with-lease с явным SHA 6cf8f05 → SUCCESS: 6cf8f05...c24bf78 (forced update)
+- Верификация на GitHub: agents/argocd/agent.yaml содержит чистый env_vars-блок ✓; лог с куками 404 ✓; .env 404 ✓; репо публичный 200 ✓
+- Пользователь проинструктирован отозвать токен после сессии
+
+Stage Summary:
+- GitHub main = c24bf78: полный фикс (26 YAML + генератор + run.py + README + .env.example), гигиена (.env и логи untracked), свежая чистая история
+- Репо публичный и безопасен: ни куки, ни токены, ни пароли не опубликованы
+- Пользовательский локальный фикс (fix_yaml.py) эквивалентен опубликованному (проверено 26/26 раньше)
