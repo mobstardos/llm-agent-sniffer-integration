@@ -8,8 +8,9 @@ args: ['-y', '@meshy-ai/meshy-mcp-server']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: IMAGE23_API_KEY, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: IMAGE23_API_KEY, level: soft}
 
 mode: write
 

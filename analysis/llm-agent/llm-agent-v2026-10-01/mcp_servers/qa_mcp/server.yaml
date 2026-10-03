@@ -13,14 +13,14 @@ args: ['run', 'qa-native-mcp']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
+    - {name: mcp, level: hard}
   env_vars:
-    - ' + '{name: QA_MCP_HOME, level: soft}'
-    - ' + '{name: QA_MCP_TRANSPORT, level: soft}'
-    - ' + '{name: QA_MCP_HTTP_HOST, level: soft}'
-    - ' + '{name: QA_MCP_HTTP_PORT, level: soft}'
-    - ' + '{name: QA_MCP_BEARER_TOKEN, level: soft}'
-    - ' + '{name: QA_MCP_TESTCLIENT_OWNERSHIP_ROOT, level: soft}'
+    - {name: QA_MCP_HOME, level: soft}
+    - {name: QA_MCP_TRANSPORT, level: soft}
+    - {name: QA_MCP_HTTP_HOST, level: soft}
+    - {name: QA_MCP_HTTP_PORT, level: soft}
+    - {name: QA_MCP_BEARER_TOKEN, level: soft}
+    - {name: QA_MCP_TESTCLIENT_OWNERSHIP_ROOT, level: soft}
 
 mode: write
 

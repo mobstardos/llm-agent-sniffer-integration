@@ -8,8 +8,9 @@ args: ['run', '--rm', '-i', '-e', 'TFC_TOKEN', 'hashicorp/terraform-mcp-server']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: TFC_TOKEN, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: TFC_TOKEN, level: soft}
 
 mode: destructive
 

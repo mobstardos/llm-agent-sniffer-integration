@@ -36,13 +36,16 @@ from pathlib import Path
 
 def gen_server_yaml(args) -> str:
     tools_yaml = '\n'.join(
-        f'  - ' + '{' + f'name: {t.split(":")[0]}, danger: {t.split(":")[1]}' + '}'
+        f'  - {{name: {t.split(":")[0]}, danger: {t.split(":")[1]}}}'
         for t in args.tools.split(',')
     ) if args.tools else '  # (no tools)'
-    env_yaml = '\n'.join(
-        f'    - ' + '{' + f'name: {ev.split(":")[0]}, level: {ev.split(":")[1]}' + '}'
-        for ev in args.env_vars.split(',')
-    ) if args.env_vars else '  env_vars: []'
+    if args.env_vars:
+        env_block = '  env_vars:\n' + '\n'.join(
+            f'    - {{name: {ev.split(":")[0]}, level: {ev.split(":")[1]}}}'
+            for ev in args.env_vars.split(',')
+        )
+    else:
+        env_block = '  env_vars: []'
     args_list = json.loads(args.args) if args.args else []
     args_yaml = json.dumps(args_list)
     return f'''id: {args.id}
@@ -55,8 +58,8 @@ args: {args_yaml}
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-  {env_yaml}
+    - {{name: mcp, level: hard}}
+{env_block}
 
 mode: {args.mode}
 
@@ -78,10 +81,13 @@ def gen_agent_yaml(args) -> str:
     dangerous = [t.split(':')[0] for t in args.tools.split(',')
                  if t.split(':')[1] in ('destructive', 'write')] if args.tools else []
     keywords = ', '.join(repr(k.strip()) for k in args.keywords.split(',')) if args.keywords else '[]'
-    env_yaml = '\n'.join(
-        f'    - ' + '{' + f'name: {ev.split(":")[0]}, level: {ev.split(":")[1]}' + '}'
-        for ev in args.env_vars.split(',')
-    ) if args.env_vars else '  env_vars: []'
+    if args.env_vars:
+        env_block = '  env_vars:\n' + '\n'.join(
+            f'    - {{name: {ev.split(":")[0]}, level: {ev.split(":")[1]}}}'
+            for ev in args.env_vars.split(',')
+        )
+    else:
+        env_block = '  env_vars: []'
     return f'''id: {args.id}
 schema_version: "1.5.0"
 title: {args.title.replace(" MCP", " агент")!r}
@@ -90,11 +96,11 @@ description: {args.description!r}
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-  {env_yaml}
+    - {{name: mcp, level: hard}}
+{env_block}
 
 mcp_servers: [{args.id}]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {{hard: [], soft: []}}
 
 priority: {args.priority}
 routing_hints:
@@ -109,8 +115,8 @@ mode: {args.mode}
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{' + f'icon: "{args.icon}", color: "{args.color}", category: {args.category}' + '}'
+runtime: {{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}}
+ui: {{icon: "{args.icon}", color: "{args.color}", category: {args.category}}}
 
 # GitHub: {args.github}
 '''

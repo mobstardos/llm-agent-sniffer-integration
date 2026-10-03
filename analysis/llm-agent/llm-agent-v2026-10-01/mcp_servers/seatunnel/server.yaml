@@ -1,15 +1,16 @@
 id: seatunnel
 schema_version: "1.5.0"
 title: Apache SeaTunnel MCP (official)
-description: Apache SeaTunnel: data integration, ETL pipelines. Official Apache SeaTunnel-tools.
+description: "Apache SeaTunnel: data integration, ETL pipelines. Official Apache SeaTunnel-tools."
 
 command: uvx
 args: ['--from', 'git+https://github.com/ocean-zhc/seatunnel-mcp', 'seatunnel-mcp']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: SEATUNNEL_API_URL, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: SEATUNNEL_API_URL, level: hard}
 
 mode: write
 

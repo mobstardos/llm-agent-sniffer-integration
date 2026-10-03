@@ -6,12 +6,13 @@ description: GitOps для Kubernetes через ArgoCD. Official argoproj-labs.
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: ARGOCD_SERVER, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: ARGOCD_SERVER, level: hard}
     - {name: ARGOCD_TOKEN, level: hard}
 
 mcp_servers: [argocd]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {hard: [], soft: []}
 
 priority: 11
 routing_hints:
@@ -26,7 +27,7 @@ dangerous_tools: ['argocd_sync', 'argocd_create_app']
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{icon: "🚀", color: "#ef7b4d", category: devops}'
+runtime: {max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}
+ui: {icon: "🚀", color: "#ef7b4d", category: devops}
 
 # GitHub (VERIFIED): https://github.com/argoproj-labs/mcp-for-argocd

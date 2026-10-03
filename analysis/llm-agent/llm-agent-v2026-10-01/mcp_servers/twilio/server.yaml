@@ -8,8 +8,9 @@ args: ['-y', 'twilio-mcp']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: TWILIO_ACCOUNT_SID, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: TWILIO_ACCOUNT_SID, level: hard}
     - {name: TWILIO_AUTH_TOKEN, level: hard}
 
 mode: write

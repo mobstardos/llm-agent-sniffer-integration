@@ -50,7 +50,7 @@ bash run.sh
 
 | Шаг | Где | Зачем |
 |---|---|---|
-| Провайдер LLM | чат → ⚙️ Настройки | ключ DeepSeek / OpenAI-совместимый / Ollama |
+| Провайдер LLM | чат → ⚙️ Настройки | ключ DeepSeek / OpenAI-совместимый / Ollama. **DeepSeek и Qwen работают без ключей — по кукам** через расширение Bridge (⚙️ Настройки → «Мост»), как описано в `docs/providers.md` |
 | PostgreSQL | `install.py` (пункт 1 — Docker) | память, векторы, аналитика |
 | Embedder | `install.py` (`auto` = bge-m3, `hash` = без загрузок) | семантический поиск памяти |
 | Первый запуск | мастер `first_run.py --defaults` уже вызван установщиком | каталоги data/, logs/, SQLite |
@@ -67,11 +67,16 @@ production: [`DEPLOYMENT_GUIDE.md`](analysis/llm-agent/llm-agent-v2026-10-01/DEP
 | Установщик спросил порт, а в `.env` оказалось `PORT=run.bat` | в вопрос о порте введён не номер | откройте `.env`, замените строку на `WEB_PORT=8000` (**не** `PORT`) |
 | `! venv не активирован`, пакеты ищутся в системе | запуск `python run.py` системным Python | запускайте через **`run.bat`** (или `.venv\Scripts\python.exe run.py`) |
 | Смок-тест установщика: «Сервер не ответил за 2 минуты» | невалидный порт в `.env` (см. выше) | исправьте `WEB_PORT`, затем `run.bat` |
-| `✗ qpx (qwenproxy-cli) не найден` | опциональный QwenProxy не установлен | только для пути Qwen: `npm install -g qwenproxy-cli` (можно игнорировать) |
+| `✗ qpx (qwenproxy-cli) не найден` | qwenproxy (альтернативный путь) не установлен | **не ошибка**: Qwen настраивается **куками, как DeepSeek** — расширение Bridge (⚙️ Настройки → «Мост») → 🔑 Qwen → войти в chat.qwen.ai. qpx нужен только для прокси-пути; подсказку можно отключить: `QWENPROXY_ENABLED=false` в `.env` |
 | PostgreSQL подключён, но таблиц нет | выбор `[3] Пропустить` при установке | `.venv\Scripts\python.exe scripts/init_db.py` |
 
 > ⚠️ Важно: `src/config.py` читает переменные **`WEB_HOST`/`WEB_PORT`** —
 > старые значения `HOST`/`PORT` из ранних версий установщика игнорируются.
+
+> 💡 **Опционально:** `bash install_mcp_servers.sh` (Git Bash) — прогрев кэша
+> MCP-серверов (25 npm + PyPI-пакеты, **15–40 минут**; «stdout is not a tty» —
+> безобидное сообщение npx в Git Bash). Скрипт можно **безопасно прервать**
+> (Ctrl+C) — агенты скачивают MCP-серверы лениво при первом использовании.
 
 ---
 

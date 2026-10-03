@@ -6,11 +6,12 @@ description: Управление IaC через Terraform Registry и HCP Terra
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: TFC_TOKEN, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: TFC_TOKEN, level: soft}
 
 mcp_servers: [terraform]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {hard: [], soft: []}
 
 priority: 10
 routing_hints:
@@ -25,7 +26,7 @@ dangerous_tools: ['tf_apply', 'tf_destroy']
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{icon: "🏗️", color: "#7b42bc", category: devops}'
+runtime: {max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}
+ui: {icon: "🏗️", color: "#7b42bc", category: devops}
 
 # GitHub (VERIFIED): https://github.com/hashicorp/terraform-mcp-server

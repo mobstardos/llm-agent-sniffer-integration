@@ -6,11 +6,11 @@ description: Доступ к базе клинических исследова�
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-    env_vars: []
+    - {name: mcp, level: hard}
+  env_vars: []
 
 mcp_servers: [clinical_trials]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {hard: [], soft: []}
 
 priority: 12
 routing_hints:
@@ -25,7 +25,7 @@ dangerous_tools: []
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{icon: "🔬", color: "#0066cc", category: specialized}'
+runtime: {max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}
+ui: {icon: "🔬", color: "#0066cc", category: specialized}
 
 # GitHub (VERIFIED): https://github.com/aafjes/mcp-clinicaltrials.gov

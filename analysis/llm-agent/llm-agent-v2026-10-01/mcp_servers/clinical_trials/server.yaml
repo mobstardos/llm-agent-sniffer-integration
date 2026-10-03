@@ -8,8 +8,8 @@ args: ['--from', 'git+https://github.com/aafjes/mcp-clinicaltrials.gov', 'mcp-cl
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-    env_vars: []
+    - {name: mcp, level: hard}
+  env_vars: []
 
 mode: read
 

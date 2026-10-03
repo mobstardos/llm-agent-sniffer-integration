@@ -8,8 +8,9 @@ args: ['-y', 'impeccable']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: IMPECCABLE_TOKEN, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: IMPECCABLE_TOKEN, level: soft}
 
 mode: write
 

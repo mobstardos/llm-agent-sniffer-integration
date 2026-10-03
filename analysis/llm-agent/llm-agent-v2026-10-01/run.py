@@ -232,10 +232,16 @@ def check_qwenproxy() -> subprocess.Popen | None:
 
     qp = which("qpx") or which("qwenproxy")
     if not qp:
-        fail("qpx (qwenproxy-cli) не найден")
-        info("Установите: npm install -g qwenproxy-cli")
-        info("Затем: запустите qpx → вкладка [5] Accounts → A "
-             "(email и пароль от chat.qwen.ai)")
+        # qpx — АЛЬТЕРНАТИВНЫЙ путь (локальный прокси). Основной путь Qwen —
+        # куки веб-чата через расширение Bridge, ровно как у DeepSeek:
+        # ключи не нужны, Node.js не нужен (docs/providers.md, «Только куки»).
+        # Поэтому не пугаем пользователя красным ✗ и не советуем ставить CLI.
+        info("qwenproxy (qpx) не установлен — необязательный путь")
+        info("Qwen настраивается куками, как DeepSeek: расширение Bridge "
+             "(⚙️ Настройки → «Мост») → 🔑 Qwen → войти в chat.qwen.ai")
+        info("Если нужен именно qwenproxy: npm install -g qwenproxy-cli, "
+             "затем qpx → вкладка [5] Accounts → A (email и пароль chat.qwen.ai); "
+             "либо отключите подсказку: QWENPROXY_ENABLED=false в .env")
         return None
 
     if not s.qwenproxy.auto_start:

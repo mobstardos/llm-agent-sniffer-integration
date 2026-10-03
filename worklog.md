@@ -684,3 +684,135 @@ Work Log:
 Stage Summary:
 - Пользователю нужен: git pull → исправить .env (PORT=run.bat → WEB_PORT=8000) → запуск через run.bat (не python run.py!)
 - Все фиксы верифицированы py_compile + AST + логические тесты
+
+---
+Task ID: log2-analysis-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь прислал второй лог (upload/Pasted Content_1790959620989.txt) — снова ImportError.
+
+Work Log:
+- Лог: папка C:\Users\User\llm-agent (СТАРАЯ копия из исходного архива, не клон репо)
+- Всё выполнено правильно: run.bat → venv создан и активирован (uvicorn из .venv ✓), зависимости ✓, PG ✓, порт 8000 ✓
+- Единственный блокер: тот же SUPERVISOR_ENABLED ImportError — код в папке старый (до фикса 40b115e)
+- Проверен raw-URL: raw.githubusercontent.com/.../src/app.py идентичен исправленному файлу (463 строки)
+- Пользователю выдан curl one-liner для замены app.py + альтернатива через git pull в клоне
+
+Stage Summary:
+- Инфраструктура у пользователя теперь полностью рабочая; нужен только исправленный app.py
+- Быстрый путь: curl -L -o src\app.py <raw-url> → run.bat
+- Полный путь (все интеграции): cd llm-agent-sniffer-integration\analysis\llm-agent\llm-agent-v2026-10-01 && git pull && run.bat
+
+---
+Task ID: qwen-cookies-fix-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь поправил: Qwen настраивается куками (как DeepSeek), а не через CLI.
+
+Work Log:
+- Проверено по коду: docs/providers.md §"Только куки" + first_run.py (QWEN_WEB_TOKEN/QWEN_WEB_COOKIES) + web_cookies.py — пользователь прав
+- run.py ветка "qpx не найден" пугала красным ✗ и советовала npm install -g qwenproxy-cli — исправлено: info вместо fail, явное указание куки-пути Bridge, qpx как опция, QWENPROXY_ENABLED=false для отключения
+- README: строки "qpx не найден" и "Провайдер LLM" обновлены (куки-путь как основной для Qwen/DeepSeek)
+
+Stage Summary:
+- Коммит запушен; пользователю даны шаги настройки Qwen по кукам (Bridge → 🔑 Qwen → chat.qwen.ai) + совет QWENPROXY_ENABLED=false
+
+---
+Task ID: yaml-venv-fix-20261002
+Agent: main (Z.ai Code)
+Task: Третий лог пользователя: ModuleNotFoundError: No module named 'yaml' в папке llm-agent.
+
+Work Log:
+- run.bat всегда использует .venv\Scripts\python.exe (проверен батник) → интерпретатор именно venv-овский
+- PyYAML ставился (был в Successfully installed второго лога, проверка "✓ yaml" проходила) → venv повреждён/потерял пакеты между запусками
+- Вероятные причины: антивирус/очистка, PYTHONHOME/PYTHONPATH в системе
+- Пользователю выдана лестница восстановления: del .venv\.installed + run.bat → rmdir .venv + run.bat → проверка set PYTHON
+- Код репо не менялся — только диагностика
+
+Stage Summary:
+- app.py уже исправлен у пользователя (curl), ImportError ушёл; осталась починка повреждённого .venv
+
+---
+Task ID: mcp-prewarm-explain-20261002
+Agent: main (Z.ai Code)
+Task: Пользователь прислал фрагмент вывода install_mcp_servers.sh (без вопроса).
+
+Work Log:
+- Идентифицирован скрипт: analysis/.../install_mcp_servers.sh (bash; docs/MCP-INTEGRATION.md)
+- Вывод пользователя = норма: окружение ✓, далее npx -y <pkg> --help качает 25 npm-пакетов в кэш по одному (⏳→✓)
+- "stdout is not a tty" — безобидное сообщение npx под Git Bash на Windows
+- Скрипт опционален: только прогрев кэша; MCP серверы качаются лениво при первом использовании агентов
+- README дополнен примечанием (опциональность, время 15-40 мин, безопасное прерывание); запушено
+
+Stage Summary:
+- Пользователю объяснён статус; главный путь — run.bat → http://127.0.0.1:8000
+
+---
+Task ID: build-exe-fix-20261002
+Agent: main (Z.ai Code)
+Task: "почему не получилось?" — лог сборки build_exe.bat (Pasted Content_1791028433495.txt).
+
+Work Log:
+- Диагноз: пользователь запустил build_exe.bat (сборка standalone .exe через PyInstaller), а не run.bat
+- Сборка упала: ERROR: Unable to find 'C:\Users\User\llm-agent\.env.example' (llm_agent.spec datas)
+- Корневая причина: корневой .gitignore (.env*, строка 34) перехватывал шаблон → файл не вендорился и не существовал
+- ВАЖНОЕ наблюдение: venv пересоздан на Python 3.11.15 (uv), ВСЕ зависимости успешно встали (torch и пр.) — run.bat теперь готов к запуску
+- Фиксы (запушено): .env.example создан (WEB_HOST/WEB_PORT, куки-подсказки, QWENPROXY_ENABLED=false), .gitignore исключения !.env.example, deploy/env.example HOST/PORT → WEB_HOST/WEB_PORT
+- Пользователю объяснено: build_exe НЕ нужен для запуска; главный путь — run.bat
+
+Stage Summary:
+- Запуск агента: run.bat (venv 3.11 готов, все фиксы на месте) → http://127.0.0.1:8000
+- Сборка exe теперь тоже работает после git pull
+
+---
+Task ID: log5-analysis-20261002
+Agent: main (Z.ai Code)
+Task: Четвёртый лог — снова ImportError SUPERVISOR_ENABLED в C:\Users\User\llm-agent.
+
+Work Log:
+- Улики: traceback app.py line 445 (исправленная версия — ~457) + старая формулировка qpx в run.py → замена файлов НИКОГДА не применялась (curl пропущен/не выполнился)
+- Проверен diff c082d99..HEAD по src/: менялись ТОЛЬКО run.py (14 строк) и src/app.py (+12) — замена 2 файлов безопасна и достаточна
+- venv у пользователя теперь здоров (Python 3.11.15, все deps ✓, PG ✓)
+- Пользователю: единый блок curl x2 + findstr-проверка + fallback PowerShell; альтернатива — git pull в клоне
+
+Stage Summary:
+- Статус пользователя: остался ровно один шаг — реально заменить app.py + run.py
+
+---
+Task ID: yaml-fix
+Agent: general-purpose
+Task: Repair 26 broken YAML configs (13 agents/agent.yaml + 13 mcp_servers/server.yaml) that failed to parse on user's Windows startup; junk from scripts/add_mcp_server.py generator injected literal " + " and misnested env-vars.
+
+Work Log:
+- Прогнал валидатор yaml.safe_load по agents/*/agent.yaml + mcp_servers/*/server.yaml → подтверждено ровно 26 битых файлов (id/argocd, cassandra, clinical_trials, headroom, image23js, impeccable, playwright_cli, qa_mcp, seatunnel, supabase, terraform, twilio, wandb в обоих каталогах)
+- Изучил эталонные схемы (agents/airtable/agent.yaml, mcp_servers/airtable/server.yaml) и все 26 битых файлов
+- Устранил 4 типа порчи в каждом файле, только синтаксис, контент сохранён:
+  1) `- ' + '{...}'` → `{...}` (requires python_packages, env_vars, depends_on, runtime, ui)
+  2) misnested env-записи (ARGOCD_SERVER/TOKEN, CASSANDRA_*, HEADROOM_*, IMAGE23_API_KEY, IMPECCABLE_TOKEN, SEATUNNEL_API_URL, SUPABASE_*, TFC_TOKEN, TWILIO_*, WANDB_API_KEY, QA_MCP_* ×6) вынесены из python_packages в корректный блок `env_vars:` (2-пробельный отступ); в clinical_trials/playwright_cli `env_vars: []` переставлен на уровень python_packages
+  3) description с "": " → обёрнуты в двойные кавычки: cassandra, seatunnel, supabase (agent.yaml+server.yaml)
+  4) unquoted-скаляры закрыты тем же удалением `' + '` джанка (это и был "unexpected end of stream" в 5 server.yaml)
+- qa_mcp (agent+server) сохранён полностью: 63 tools, 6 env-vars QA_MCP_*, depends_on {hard: [onec], soft: [...]}, runtime 25/50000/1800, хвостовые комментарии
+- Проверка false-alarm: строка `mcp_servers: [headroom]` казалась битой (`eadroom]`) в diff/выводах — проверено base64: файл и HEAD корректны, это артефакт транспорта вывода, правки не потребовалось
+- Семантическая валидация: типы всех полей + cross-ref (agent.mcp_servers == [id], tools {name,danger}, process-блок) — 0 ошибок; токен-дифф против git HEAD: 0 потерянных токенов во всех 26 файлах, добавлены только заголовки `env_vars:` и кавычки description
+- Финальный обязательный валидатор: BROKEN: 0; git diff --stat по agents/+mcp_servers/: ровно 26 файлов, лишних правок нет; git add/commit не делал
+
+Stage Summary:
+- Все 26 YAML чинены и парсятся (BROKEN: 0); контент/семантика сохранены (0 потерянных токенов vs HEAD)
+- Корень зла найден: scripts/add_mcp_server.py (строки 39-113) сам содержит битые шаблоны с " + " — НЕ чинил (вне скоупа 26 файлов); следующий шаг — исправить его шаблоны, иначе новые агент/MCP снова сгенерируются битыми
+
+---
+Task ID: yaml-fix-orchestrator
+Agent: orchestrator (main)
+Task: Verify subagent repairs, fix generator root cause, commit, prepare user-side offline fix (push blocked by missing credentials)
+
+Work Log:
+- Независимо провалидировал правки субагента: yaml-валидатор BROKEN: 0; git diff --stat = ровно 26 файлов (123+/103-)
+- Починил корень: scripts/add_mcp_server.py — экранировал {{}} в f-string шаблонах (python_packages/env_vars/depends_on/runtime/ui), исправил отступ env_block; smoke-тест gen_server_yaml/gen_agent_yaml (с env и без) — все 4 случая дают валидный YAML
+- Commit ad811e0 "Fix 26 broken agent/MCP YAML configs + repair add_mcp_server.py generator" (27 файлов)
+- git push FAILED: нет кредов (прошлые пуши через одноразовый token URL; старый ghp_***... отозван/скомпрометирован) — репо на GitHub пока содержит битые YAML
+- Подготовил автономный фикс для пользователя: /home/z/tmp_fix/fix_yaml.py (текстовые трансформации: удаление "' + '" джанка + хвостовой кавычки, канонический ребилд requires-блока с env_vars, квотинг description с ": ")
+- GOLD-STANDARD тест: извлёк битые версии 26 файлов из git (1f80840), прогнал скрипт → 26/26 FIXED, 0 errors; сравнение yaml.safe_load-контента с эталоном репо → MATCH 26/26. Скрипт гарантированно идентичен репо-фиксу
+- MCP "Connection closed" (airtable, aws_*): не-фатально, mcp_manager.py ловит per-server (строка 88-89); причина — npx-пакеты не скачаны (install_mcp_servers.sh не запускался) и/или нет API-ключей в .env
+
+Stage Summary:
+- Репо: фикс готов локально (ad811e0), НУЖЕН свежий токен от пользователя для push
+- Пользователю выдан fix_yaml.py (paste в PowerShell → .venv\Scripts\python.exe fix_yaml.py → run.bat) — чинит все 26 файлов локально без GitHub
+- Статус пользователя: ImportError побеждён (app.py/run.py заменены), сервер стартует; остались только YAML-варнинги (26) и опциональные MCP-фейлы

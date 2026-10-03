@@ -8,8 +8,9 @@ args: ['-y', 'argocd-mcp@latest']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: ARGOCD_SERVER, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: ARGOCD_SERVER, level: hard}
     - {name: ARGOCD_TOKEN, level: hard}
 
 mode: destructive

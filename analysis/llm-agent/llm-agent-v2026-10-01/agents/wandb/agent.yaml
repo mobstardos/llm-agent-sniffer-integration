@@ -6,11 +6,12 @@ description: Query and analyze your Weights & Biases data через MCP. Offici
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: WANDB_API_KEY, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: WANDB_API_KEY, level: hard}
 
 mcp_servers: [wandb]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {hard: [], soft: []}
 
 priority: 11
 routing_hints:
@@ -25,7 +26,7 @@ dangerous_tools: []
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{icon: "🏋️", color: "#ffb300", category: ai_obs}'
+runtime: {max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}
+ui: {icon: "🏋️", color: "#ffb300", category: ai_obs}
 
 # GitHub (VERIFIED): https://github.com/wandb/wandb-mcp-server

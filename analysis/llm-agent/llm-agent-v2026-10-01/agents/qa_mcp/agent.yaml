@@ -9,13 +9,13 @@ description: >
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
+    - {name: mcp, level: hard}
   env_vars:
-    - ' + '{name: QA_MCP_HOME, level: soft}'
-    - ' + '{name: QA_MCP_TRANSPORT, level: soft}'
+    - {name: QA_MCP_HOME, level: soft}
+    - {name: QA_MCP_TRANSPORT, level: soft}
 
 mcp_servers: [qa_mcp]
-depends_on: ' + '{hard: [onec], soft: [onec_metadata, onec_forms, onec_tests]}'
+depends_on: {hard: [onec], soft: [onec_metadata, onec_forms, onec_tests]}
 
 priority: 7
 routing_hints:
@@ -32,8 +32,8 @@ dangerous_tools: [launch_test_client, stop_test_client, delete_table_row, write_
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 25, max_result_chars: 50000, timeout_seconds: 1800}'
-ui: ' + '{icon: "🧪", color: "#16a34a", category: 1c_qa}'
+runtime: {max_steps: 25, max_result_chars: 50000, timeout_seconds: 1800}
+ui: {icon: "🧪", color: "#16a34a", category: 1c_qa}
 
 # GitHub (VERIFIED): https://github.com/vlikhobabin/qa-mcp-public
 # License: Apache-2.0

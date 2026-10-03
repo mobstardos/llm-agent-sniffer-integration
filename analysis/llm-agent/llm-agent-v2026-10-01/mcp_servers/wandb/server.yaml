@@ -8,8 +8,9 @@ args: ['wb-mcp']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: WANDB_API_KEY, level: hard}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: WANDB_API_KEY, level: hard}
 
 mode: read
 

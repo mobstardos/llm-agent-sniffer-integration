@@ -6,12 +6,13 @@ description: Cross-agent memory и сжатие контекста. Claude/Codex
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: HEADROOM_BIN, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: HEADROOM_BIN, level: soft}
     - {name: HEADROOM_PROJECT_ROOT, level: soft}
 
 mcp_servers: [headroom]
-depends_on: ' + '{hard: [], soft: []}'
+depends_on: {hard: [], soft: []}
 
 priority: 8
 routing_hints:
@@ -26,7 +27,7 @@ dangerous_tools: ['headroom_save_memory', 'headroom_learn']
 prompt: prompt.md
 user_template: user.md
 
-runtime: ' + '{max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}'
-ui: ' + '{icon: "🧠", color: "#9333ea", category: ai_obs}'
+runtime: {max_steps: 15, max_result_chars: 30000, timeout_seconds: 600}
+ui: {icon: "🧠", color: "#9333ea", category: ai_obs}
 
 # GitHub: https://github.com/headroom-ai/headroom

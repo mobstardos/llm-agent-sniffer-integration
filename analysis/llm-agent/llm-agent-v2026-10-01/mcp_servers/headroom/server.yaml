@@ -8,8 +8,9 @@ args: ['-m', 'src.mcp_servers.headroom.server']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-      - {name: HEADROOM_BIN, level: soft}
+    - {name: mcp, level: hard}
+  env_vars:
+    - {name: HEADROOM_BIN, level: soft}
     - {name: HEADROOM_PROJECT_ROOT, level: soft}
 
 mode: write

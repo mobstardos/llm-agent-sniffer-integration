@@ -8,8 +8,8 @@ args: ['-y', '@playwright/mcp']
 
 requires:
   python_packages:
-    - ' + '{name: mcp, level: hard}'
-    env_vars: []
+    - {name: mcp, level: hard}
+  env_vars: []
 
 mode: read
 
